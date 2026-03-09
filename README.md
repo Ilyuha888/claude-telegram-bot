@@ -1,2 +1,169 @@
-# yet_another_personal_assistant
-Local hosted personal assistant (with LLM under the hood) for managing Obsidian Knowledge Base and more...
+# Personal Assistant Platform
+
+Self-hosted personal assistant platform with Telegram as the primary interface, an Obsidian-backed knowledge vault, a Git approval flow for knowledge changes, scheduled jobs, and extensible tool integrations.
+
+## Product Vision
+
+The goal is not to build a magical autonomous agent. The goal is to build a reliable personal assistant platform with clear control boundaries:
+
+- Telegram is the primary UX channel.
+- The Obsidian knowledge vault is the main long-term knowledge system.
+- Git is the source of truth for knowledge changes.
+- The LLM orchestrates approved tools but does not get arbitrary shell access.
+- Scheduled work runs through a separate job execution path.
+- External integrations can be added later behind typed adapters.
+
+## V1 Scope
+
+### In Scope
+
+1. Telegram interaction:
+   - text messages
+   - links
+   - images
+2. Knowledge vault operations:
+   - read Markdown notes
+   - search the vault
+   - create and move Markdown notes
+   - create directories
+   - attach images to notes
+   - create internal assistant notes
+3. Git-backed change management for the knowledge vault:
+   - isolated working branch
+   - change summary and diff overview
+   - explicit user approval
+   - commit and pull request to the private knowledge repository
+4. Session handling:
+   - normal chat flow
+   - topic-based workspaces
+   - switching between active contexts
+5. Scheduling:
+   - reminders
+   - recurring jobs
+   - user-created jobs
+   - agent-created jobs through policy-controlled tools
+6. Web search through an adapter boundary.
+
+### Out of Scope for V1
+
+- permanently running autonomous coding agents
+- full voice UX
+- multi-user support
+- arbitrary script execution from the runtime LLM
+- production-grade external calendar or LinkedIn automation
+
+## Confirmed Decisions
+
+- Runtime architecture: custom orchestrator with a deterministic tool runtime.
+- Backend language: Python 3.12+.
+- Runtime metadata store: Postgres.
+- Knowledge model: separate knowledge-vault Git repository.
+- Safety model: no arbitrary shell access for the runtime LLM.
+- Workspace model: Telegram topics map to long-lived workspaces.
+- LLM provider at project start: Z.ai behind an `LLMClient` interface.
+
+## High-Level Architecture
+
+The runtime is application-first rather than agent-framework-first:
+
+1. A Telegram gateway receives inbound updates.
+2. A session manager resolves the active workspace and session.
+3. An orchestrator builds context, invokes the LLM, and executes typed tool calls.
+4. Tools operate behind policy checks and produce auditable side effects.
+5. Persistence is split between:
+   - Postgres for runtime metadata, sessions, jobs, and audit records
+   - the knowledge-vault Git repository for long-term notes and assets
+
+Core subsystems:
+
+- Telegram gateway
+- session manager
+- agent orchestrator
+- tool runtime
+- policy layer
+- Postgres-backed persistence layer
+- scheduler and worker
+
+Detailed technical design lives in [ARCHITECTURE.md](ARCHITECTURE.md). Agent-specific operating rules live in [AGENTS.md](AGENTS.md).
+
+## Knowledge Repository Layout
+
+Expected structure for the knowledge repository:
+
+- `notes/` for user notes
+- `assets/` for images and attachments
+- `assistant/` for assistant-managed artifacts
+  - `profile/`
+  - `rules/`
+  - `tasks/`
+  - `indexes/`
+  - `drafts/`
+  - `reviews/`
+
+## MVP Definition of Done
+
+The MVP is done when the assistant can:
+
+1. receive text, links, and images from Telegram
+2. create or update Obsidian notes
+3. attach an image to a note
+4. find related notes and answer using vault context
+5. show a review summary before a commit
+6. create a branch, commit, and pull request after approval
+7. create reminders or recurring jobs
+8. operate across multiple topic-based workspaces without mixing context
+
+## Open Decisions and TBDs
+
+The following items are intentionally not locked yet and should remain explicit TBDs until they are decided:
+
+- pre-approval staging model for vault mutations
+- whether scheduled jobs may write to the vault directly
+- whether scheduled writes always require human approval
+- whether the runtime uses a separate vault clone or worktree from the user's Obsidian clone
+- Telegram bot library choice
+- Git integration library choice
+- web search provider choice beyond the abstract interface
+- Redis usage policy in the MVP
+- audit and logging redaction boundaries
+- path canonicalization and symlink-handling details
+- external integration design for:
+  - LinkedIn API
+  - Google Calendar API
+
+## Roadmap
+
+### Phase 0
+
+- runtime repository scaffold
+- Docker Compose setup
+- Telegram receive and send flow
+- Z.ai adapter
+- minimal tool loop
+
+### Phase 1
+
+- Obsidian read, write, and search
+- Git approval flow
+- sessions and summaries
+- reminders and recurring jobs
+- image attachment flow
+
+### Phase 2
+
+- Telegram topics as workspaces
+- per-workspace profiles
+- workspace summaries
+- bootstrap commands for new workspaces
+
+### Phase 3
+
+- vault indexing
+- note linking suggestions
+- duplicate detection
+- inbox-to-structured-note workflows
+
+### Phase 4
+
+- external integrations behind adapters
+- broader automation capabilities after the open decisions are resolved
