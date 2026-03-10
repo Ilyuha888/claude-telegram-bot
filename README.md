@@ -72,7 +72,7 @@ The runtime is application-first rather than agent-framework-first:
 4. Tools operate behind policy checks and produce auditable side effects.
 5. Persistence is split between:
    - Postgres for runtime metadata, sessions, jobs, and audit records
-   - the knowledge-vault Git repository for long-term notes and assets
+   - the knowledge-vault Git repository for long-term user notes, colocated attachments, and assistant-managed artifacts
 
 Core subsystems:
 
@@ -88,17 +88,16 @@ Detailed technical design lives in [ARCHITECTURE.md](ARCHITECTURE.md). Agent-spe
 
 ## Knowledge Repository Layout
 
-Expected structure for the knowledge repository:
+Current structure for the knowledge repository:
 
-- `notes/` for user notes
-- `assets/` for images and attachments
-- `assistant/` for assistant-managed artifacts
-  - `profile/`
-  - `rules/`
-  - `tasks/`
-  - `indexes/`
-  - `drafts/`
-  - `reviews/`
+- `User_Obsidian_Vault/` for user-owned notes
+  - hub notes and folders coexist at the top level
+  - a note may have a same-named directory for deeper material, for example `Я аналитик.md` with `Я аналитик/`, or `Я студент.md` with `Я студент/`
+  - attachments usually live next to the related notes in sibling `files/` directories
+- `Agent_Obsidian_Vault/` for assistant-managed artifacts
+  - machine-readable zones may live under direct subdirectories such as `profile/`, `rules/`, `tasks/`, `indexes/`, `drafts/`, and `reviews/`
+
+These are working patterns rather than rigid taxonomy contracts. The user vault is intentionally heterogeneous.
 
 ## MVP Definition of Done
 

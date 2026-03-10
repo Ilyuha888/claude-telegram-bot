@@ -86,7 +86,7 @@ flowchart TD
 ### Persistence Layer
 
 - Postgres stores runtime metadata, sessions, jobs, review requests, and audit events
-- the knowledge-vault repository stores notes, attachments, and assistant-managed artifacts
+- the knowledge-vault repository stores user notes, colocated attachments, and assistant-managed artifacts
 
 ### Scheduler and Worker
 
@@ -117,7 +117,7 @@ Single Docker Compose deployment:
 
 ### Sources of Truth
 
-- knowledge vault repository for notes, assets, and long-term knowledge
+- knowledge vault repository for user notes, colocated attachments, agent-owned artifacts, and long-term knowledge
 - Postgres for runtime metadata, sessions, jobs, and audit records
 - Git history for change tracking and reviewable knowledge mutations
 
@@ -165,8 +165,8 @@ Core entities:
 Responsibilities:
 
 - search the vault
-- read Markdown notes and assets
-- manage assistant-owned metadata
+- read Markdown notes and colocated attachments
+- manage assistant-owned artifacts in the agent vault
 - produce reviewable mutation proposals
 
 Core entities:
@@ -241,9 +241,9 @@ This split allows the system to:
 ```yaml
 session_state:
   workspace_profile:
-    name: "career"
+    name: "analytics"
     default_paths:
-      - "notes/career"
+      - "User_Obsidian_Vault/Я аналитик"
     allowed_tools:
       - "vault.read"
       - "vault.search"
@@ -256,7 +256,7 @@ session_state:
   pending_tasks:
     - "Prepare a review summary before the PR"
   open_artifacts:
-    - "notes/career/linkedin_pipeline.md"
+    - "User_Obsidian_Vault/Я аналитик/Experience/JoomPulse/01. Before First Day.md"
 ```
 
 ### Compaction Strategy
@@ -335,22 +335,24 @@ Explicitly prohibited in runtime v1:
 
 ### Repository Expectations
 
-Expected knowledge repository zones:
+The live knowledge repository is organized as two top-level roots:
 
-- `notes/`
-- `assets/`
-- `assistant/profile/`
-- `assistant/rules/`
-- `assistant/tasks/`
-- `assistant/indexes/`
-- `assistant/drafts/`
-- `assistant/reviews/`
+- `User_Obsidian_Vault/` for user-owned notes and colocated attachments
+- `Agent_Obsidian_Vault/` for assistant-managed artifacts
+
+Common user-vault patterns:
+
+- top-level hub notes such as `User_Obsidian_Vault/Я аналитик.md`
+- note-folder pairs such as `User_Obsidian_Vault/Я аналитик.md` with `User_Obsidian_Vault/Я аналитик/`
+- note-local attachment folders such as `User_Obsidian_Vault/Я аналитик/Experience/JoomPulse/files/`
+
+These are examples rather than rigid schema contracts. The user vault is intentionally heterogeneous.
 
 ### Write Boundaries
 
 Confirmed policy:
 
-- writes are limited to approved knowledge-repository roots
+- writes are limited to approved roots inside `User_Obsidian_Vault/` and `Agent_Obsidian_Vault/`
 - hidden system paths such as `.git/` and `.obsidian/` are not writable from the runtime
 - executable files are not valid write targets
 
@@ -368,21 +370,23 @@ Telegram image
   -> temporary staging
   -> optional OCR or vision summary
   -> intent resolution
-  -> persisted asset and note update
+  -> persisted note-local attachment in `files/`
+  -> note update
 ```
 
-Recommended asset naming pattern:
+Default attachment placement should follow the active note directory, typically `${noteFolderPath}/files`:
 
 ```text
-assets/2026/03/<note-slug>/<timestamp>_<shorthash>.jpg
+User_Obsidian_Vault/<area>/<parent-folder>/files/<generated-name>.<ext>
 ```
 
-Markdown embedding may use either:
+Filename normalization may follow the user's Obsidian attachment configuration rather than a centralized attachment scheme.
 
-- Obsidian wiki embeds, or
-- standard Markdown links
+The live vault predominantly uses Obsidian wiki links and embeds.
 
-The final default should stay `TBD` until note-link policy is fixed.
+Imported material may still contain standard Markdown links.
+
+New assistant writes should remain compatible with Obsidian link resolution.
 
 ## Change Management and Approval Flow
 
