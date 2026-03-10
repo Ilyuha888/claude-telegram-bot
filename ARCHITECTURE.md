@@ -529,35 +529,50 @@ These items are intentionally unresolved and must not be treated as implementati
 
 ### Mutation and Review Flow
 
-- pre-approval staging model for vault mutations
-- whether the runtime uses a separate vault clone or worktree from the user's Obsidian clone
-- exact branch naming convention for assistant-generated review branches
+- `TBD-01` pre-approval staging model for vault mutations
+  Comment: define recovery for partially successful approved changes, especially `commit ok -> push failed -> PR not created`.
+- `TBD-02` whether the runtime uses a separate vault clone or worktree from the user's Obsidian clone
+  Comment: this decision affects isolation from the live Obsidian workspace, sync conflicts, and file-watcher behavior.
+- `TBD-03` exact branch naming convention for assistant-generated review branches
+  Comment: also decide cleanup policy for abandoned or superseded review branches.
+- `TBD-04` canonical `session_state` schema for `pending_tasks`, `open_loops`, and `decisions`
+  Comment: the document currently references multiple shapes; one schema should be normative before prompt builders and persistence models are implemented.
 
 ### Scheduled Writes
 
-- whether scheduled jobs may write directly to the vault
-- whether scheduled writes always require explicit user approval
-- whether agent-created follow-up jobs need stricter limits than user-created jobs
+- `TBD-05` whether scheduled jobs may write directly to the vault
+  Comment: if yes, define where job-produced artifacts live when results are stored instead of only sent to Telegram.
+- `TBD-06` whether scheduled writes always require explicit user approval
+  Comment: clarify whether user-created and agent-created jobs share the same default approval policy.
+- `TBD-07` whether agent-created follow-up jobs need stricter limits than user-created jobs
+  Comment: stricter limits likely need to cover write scopes, schedule frequency, and self-rescheduling.
 
 ### Integrations and Providers
 
-- Telegram bot library choice
-- Git integration library choice
-- web search provider choice
-- LinkedIn API integration design
-- Google Calendar API integration design
+- `TBD-08` Telegram bot library choice
+- `TBD-09` Git integration library choice
+- `TBD-10` web search provider choice
+- `TBD-11` LinkedIn API integration design
+- `TBD-12` Google Calendar API integration design
 
 ### Runtime Infrastructure
 
-- whether Redis is optional or required in the MVP
-- exact sync strategy for the vault working copy
-- deployment-time secret management beyond local development
+- `TBD-13` whether Redis is optional or required in the MVP
+  Comment: document which queue, locking, and retry guarantees degrade or disappear when Redis is not present.
+- `TBD-14` exact sync strategy for the vault working copy
+  Comment: this is coupled with the separate clone/worktree decision and conflict resolution behavior.
+- `TBD-15` deployment-time secret management beyond local development
 
 ### Safety and Audit Details
 
-- path canonicalization and symlink-handling rules
-- logging redaction boundaries
-- retention policy for prompts, OCR output, and audit events
+- `TBD-16` path canonicalization and symlink-handling rules
+  Comment: include the case where Obsidian attachment configuration resolves outside approved write roots.
+- `TBD-17` logging redaction boundaries
+  Comment: define whether raw prompts, OCR text, and note excerpts may appear in operator-visible logs.
+- `TBD-18` retention policy for prompts, OCR output, and audit events
+  Comment: retention may need to differ for successful requests, denied writes, and failed jobs.
+- `TBD-19` inbound and outbound idempotency keys, deduplication windows, and retention
+  Comment: this is needed to make Telegram retries and duplicate job delivery behavior deterministic.
 
 ## Suggested ADRs
 

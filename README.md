@@ -114,21 +114,7 @@ The MVP is done when the assistant can:
 
 ## Open Decisions and TBDs
 
-The following items are intentionally not locked yet and should remain explicit TBDs until they are decided:
-
-- pre-approval staging model for vault mutations
-- whether scheduled jobs may write to the vault directly
-- whether scheduled writes always require human approval
-- whether the runtime uses a separate vault clone or worktree from the user's Obsidian clone
-- Telegram bot library choice
-- Git integration library choice
-- web search provider choice beyond the abstract interface
-- Redis usage policy in the MVP
-- audit and logging redaction boundaries
-- path canonicalization and symlink-handling details
-- external integration design for:
-  - LinkedIn API
-  - Google Calendar API
+The canonical open-decision list lives in [ARCHITECTURE.md](ARCHITECTURE.md#tbd--open-decisions).
 
 ## Roadmap
 
