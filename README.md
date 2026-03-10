@@ -40,8 +40,8 @@ The goal is not to build a magical autonomous agent. The goal is to build a reli
 5. Scheduling:
    - reminders
    - recurring jobs
-   - user-created jobs
-   - agent-created jobs through policy-controlled tools
+   - user-created jobs with approved `Agent_Obsidian_Vault/` artifact scopes
+   - agent-created follow-up jobs that start pending approval and stay within agent-owned write scopes
 6. Web search through an adapter boundary.
 
 ### Out of Scope for V1
@@ -61,6 +61,7 @@ The goal is not to build a magical autonomous agent. The goal is to build a reli
 - Safety model: no arbitrary shell access for the runtime LLM.
 - Workspace model: Telegram topics map to long-lived workspaces.
 - LLM provider at project start: Z.ai behind an `LLMClient` interface.
+- Scheduled jobs may auto-persist only to approved `Agent_Obsidian_Vault/` artifact paths; `User_Obsidian_Vault/` changes remain review-gated.
 
 ## High-Level Architecture
 

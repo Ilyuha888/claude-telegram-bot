@@ -16,6 +16,9 @@ This document is the technical source of truth for the assistant runtime. It des
 - File mutations must go through policy-controlled tools and an approval flow.
 - Long-term knowledge lives in the vault and Git history, not in raw chat transcripts.
 - Initial LLM provider: Z.ai behind an `LLMClient` abstraction.
+- Vault mutation review flow uses a service-owned vault clone with isolated per-review worktrees.
+- Review branches are created per approved `ReviewRequest`, not per workspace.
+- `SessionState` is versioned and typed; `pending_tasks`, `open_loops`, and `decisions` are structured collections.
 
 ## System Model
 
@@ -143,6 +146,29 @@ Core entities:
 - `Attachment`
 - `ChatRoute`
 - `TopicRoute`
+- `IdempotencyRecord`
+
+Idempotency contract:
+
+```yaml
+idempotency_record:
+  scope: telegram_inbound | telegram_outbound | job_trigger
+  idempotency_key: string
+  source_ref: string
+  window_expires_at: timestamp
+  retained_until: timestamp
+  terminal_status: accepted | completed | failed | denied
+  result_ref: turn_id | outbound_message_ref | job_run_id
+```
+
+Normative keys and windows:
+
+- Telegram inbound uses `tg-in:<bot_id>:<update_id>` when `update_id` is present
+- Telegram inbound falls back to `tg-in:<bot_id>:<chat_id>:<topic_id>:<message_id>[:<file_unique_id>]` for attachment-only retries or provider gaps
+- Telegram inbound records are deduplicated for `30d`; duplicates must return the previous result without re-running tools
+- Telegram outbound uses `tg-out:<route>:<origin_turn_or_job_run>:<message_purpose>` with a `7d` deduplication window
+- Telegram outbound metadata remains queryable under `audit_metadata` retention after the deduplication window closes
+- Telegram outbound retries must replay the prior delivery result and must not emit a second Telegram message
 
 ### Session Context
 
@@ -240,7 +266,9 @@ This split allows the system to:
 
 ```yaml
 session_state:
+  schema_version: 1
   workspace_profile:
+    workspace_id: "topic:analytics"
     name: "analytics"
     default_paths:
       - "User_Obsidian_Vault/Я аналитик"
@@ -254,10 +282,43 @@ session_state:
   active_facts:
     - "User is exploring DS and LLM roles"
   pending_tasks:
-    - "Prepare a review summary before the PR"
+    - id: "task-01"
+      title: "Prepare a review summary before the PR"
+      status: pending
+      owner: assistant
+      source_turn_id: "turn-42"
+      blocking_on: approval
+      related_artifacts:
+        - "User_Obsidian_Vault/Я аналитик/Experience/JoomPulse/01. Before First Day.md"
+  open_loops:
+    - id: "loop-01"
+      kind: approval
+      summary: "Wait for approval on the prepared review request"
+      waiting_on: user
+      source_turn_id: "turn-42"
+      opened_at: "2026-03-10T12:00:00Z"
+      related_task_ids:
+        - "task-01"
+  decisions:
+    - id: "decision-01"
+      topic: "review-flow"
+      summary: "Create one review branch per approved review request"
+      decided_by: user
+      source_turn_id: "turn-21"
+      decided_at: "2026-03-09T18:40:00Z"
   open_artifacts:
     - "User_Obsidian_Vault/Я аналитик/Experience/JoomPulse/01. Before First Day.md"
+  last_compacted_at: "2026-03-10T12:05:00Z"
 ```
+
+Normative collection rules:
+
+- `schema_version` is mandatory and must be incremented on incompatible shape changes.
+- `pending_tasks` contains only unresolved actionable items with `status in {pending, in_progress, blocked}`.
+- terminal tasks such as `done`, `cancelled`, or `dropped` must leave `session_state` and remain only in audit history or summaries.
+- `open_loops` contains only unresolved follow-ups with `kind in {user_answer, approval, conflict, external_event}`.
+- `decisions` contains only active finalized decisions that still affect behavior; superseded or historical decisions must leave `session_state` and remain only in durable history.
+- free-form string-only variants of `pending_tasks`, `open_loops`, and `decisions` are invalid.
 
 ### Compaction Strategy
 
@@ -272,8 +333,9 @@ Compaction rules:
 
 1. Keep the most recent turns as raw history.
 2. Compress older history into `rolling_summary`.
-3. Extract durable context into `active_facts`, `open_loops`, and `decisions`.
+3. Extract durable context into `active_facts`, `pending_tasks`, `open_loops`, and `decisions`.
 4. Store summaries in Postgres and promote important outcomes into the vault when appropriate.
+5. Drop terminal tasks and superseded decisions from the compacted `session_state`.
 
 ## Tool Runtime Design
 
@@ -356,7 +418,26 @@ Confirmed policy:
 - hidden system paths such as `.git/` and `.obsidian/` are not writable from the runtime
 - executable files are not valid write targets
 
-Implementation details for canonicalization, symlink handling, and exact staging mechanics remain `TBD`.
+Write-policy contract:
+
+```yaml
+write_policy_decision:
+  requested_path: string
+  canonical_path: string
+  effective_path: string
+  policy_decision: allow | deny | remap
+  fallback_reason: null | outside_write_root | obsidian_attachment_escape
+```
+
+Normative path validation:
+
+1. Resolve every candidate write path relative to the vault working copy before any file mutation.
+2. Canonicalize the candidate path and reject any path containing `..` traversal after normalization.
+3. Reject targets under protected paths such as `.git/`, `.obsidian/`, hidden runtime metadata directories, and executable file targets.
+4. Deny the write if the target path itself or any ancestor in the resolved path is a symlink, even when the final resolved location still lands inside the vault repository.
+5. Allow the write only when the canonical path stays inside an approved write root under `User_Obsidian_Vault/` or `Agent_Obsidian_Vault/`.
+
+`requested_path`, `canonical_path`, and `effective_path` must be recorded in review artifacts and audit records for every controlled write.
 
 ### Image Flow
 
@@ -382,6 +463,12 @@ User_Obsidian_Vault/<area>/<parent-folder>/files/<generated-name>.<ext>
 
 Filename normalization may follow the user's Obsidian attachment configuration rather than a centralized attachment scheme.
 
+If Obsidian attachment configuration resolves outside approved write roots, the runtime must ignore that external target, remap the asset into the nearest allowed note-local `files/` directory, and record `policy_decision=remap` with `fallback_reason=obsidian_attachment_escape`.
+
+Attachment path handling must follow the same canonicalization and symlink-denial rules as other controlled writes.
+
+Review summaries must surface attachment remaps so the user can see both the requested and effective paths before approval.
+
 The live vault predominantly uses Obsidian wiki links and embeds.
 
 Imported material may still contain standard Markdown links.
@@ -405,7 +492,81 @@ Required validations before commit:
 - no oversized files outside policy
 - review summary generated successfully
 
-The exact pre-approval staging model is `TBD`.
+Approval modes:
+
+- interactive requests and any mutation targeting `User_Obsidian_Vault/` require explicit per-change review approval
+- scheduled jobs may use approval granted at job creation or update only for direct artifact writes that stay inside declared `Agent_Obsidian_Vault/` prefixes
+- a scheduled run that proposes a `User_Obsidian_Vault/` change must emit a review package and wait for explicit approval before the mutation pipeline continues
+
+Confirmed staging model:
+
+- the runtime maintains one service-owned vault clone per environment and never writes into the user's live Obsidian clone
+- each review request creates an isolated local staging branch `assistant/staging/<review_request_id>` and a dedicated worktree rooted at a recorded `base_commit`
+- pre-approval file mutations happen only inside that staging worktree
+- every prepared review persists both the filesystem staging metadata and a normalized `change_manifest` so the worktree can be replayed or rebuilt deterministically
+
+Review request contract:
+
+```yaml
+review_request:
+  id: "rr_01HV6M8F8MQ8Q0QFQ5Y5B4Y8CN"
+  base_branch: "main"
+  base_commit: "abc1234"
+  staging_branch: "assistant/staging/rr_01HV6M8F8MQ8Q0QFQ5Y5B4Y8CN"
+  staging_worktree_path: "/srv/personal-assistant/vault/worktrees/rr_01HV6M8F8MQ8Q0QFQ5Y5B4Y8CN"
+  change_manifest:
+    - op: "update_file"
+      path: "User_Obsidian_Vault/Я аналитик/Experience/JoomPulse/01. Before First Day.md"
+      content_sha256: "..."
+  branch_name: "assistant/review/analytics/rr_01hv6m8f8mq8q0qfq5y5b4y8cn-note-rewrite"
+  commit_sha: null
+  pr_ref: null
+  status: "awaiting_approval"
+  last_error: null
+  superseded_by: null
+  created_at: "2026-03-10T12:00:00Z"
+  approved_at: null
+```
+
+Lifecycle:
+
+1. `git.prepare_review` fetches `origin/<base_branch>`, records `base_commit`, creates the staging branch and worktree, applies the requested mutations, and stores review metadata plus `change_manifest`.
+2. The user reviews the diff and summary from the isolated worktree. No `push`, remote branch, or PR exists before approval.
+3. On approval, the runtime replays the same `change_manifest` on top of the latest `origin/<base_branch>` in a fresh worktree.
+4. If replay conflicts or changes the reviewed diff, the review request becomes `conflicted` and must be regenerated instead of silently rebased.
+5. If replay is clean, the runtime commits the changes, pushes the final review branch, and creates the PR.
+
+State machine:
+
+```text
+drafting
+  -> awaiting_approval
+  -> approved_pending_replay
+  -> commit_created
+  -> branch_pushed
+  -> pr_created
+```
+
+Recoverable and terminal side states:
+
+- `failed_recoverable` for retryable infrastructure failures such as `commit ok -> push failed`
+- `conflicted` when replay on the latest base is not clean or changes the reviewed diff
+- `superseded` when a newer review request replaces the current one
+- `abandoned` when an unapproved review request expires past the cleanup window
+
+Recovery rules:
+
+- if `commit_sha` exists and `push` fails, retry only the push step
+- if the remote branch already exists and PR creation fails, retry only PR creation against the recorded `branch_name`
+- if the staging worktree is lost or stale, rebuild it from `change_manifest` plus `base_commit` rather than treating the filesystem as the only source of truth
+
+Branch naming and cleanup:
+
+- final pushed review branches use `assistant/review/<workspace_slug>/<review_request_id>-<theme_slug>`
+- `workspace_slug` and `theme_slug` must be lowercase Git-safe ASCII; non-Latin names should be transliterated, and empty or unstable slugs must fall back to `<kind>-<hash8>`
+- if a user-supplied ticket exists, include it in `theme_slug` such as `jpa-123-note-rewrite`, but do not make a ticket mandatory
+- local staging branches and worktrees must be deleted immediately after terminal states
+- remote review branches should be deleted after PR merge or close, and superseded or abandoned branches should be swept after `14d`
 
 ## Scheduler Model
 
@@ -429,7 +590,22 @@ job:
   workspace_id: topic:career
   prompt_template: "Remind the user to review ..."
   created_by: user | agent
-  enabled: true | false
+  activation_state: pending_approval | active | paused | expired
+  allowed_write_prefixes:
+    - "Agent_Obsidian_Vault/tasks/daily-review"
+  artifact_root: "Agent_Obsidian_Vault/tasks/daily-review"
+  approval_mode: on_create | per_change_set
+  max_runs: 30 | null
+  expires_at: timestamp | null
+  allow_self_reschedule_within_bounds: true | false
+```
+
+```yaml
+job_policy:
+  allow_direct_agent_artifact_write: true | false
+  allow_direct_user_vault_write: false
+  allow_child_jobs: false
+  min_interval: duration
 ```
 
 ### Job Execution Flow
@@ -444,7 +620,43 @@ scheduler trigger
   -> audit log is recorded
 ```
 
-Whether job-triggered vault writes are allowed, and whether they always require approval, remains `TBD`.
+Job-trigger idempotency:
+
+- scheduled execution uses `job-run:<job_id>:<scheduled_at>` as the persistent idempotency key
+- job-trigger records are retained for `365d`
+- duplicate triggers must reuse the existing `job_run_id`, replay the stored terminal status, and must not create a second execution
+
+Scheduled write policy:
+
+- scheduled jobs may directly persist only to declared `Agent_Obsidian_Vault/` prefixes approved at job creation or update
+- scheduled runs must not directly mutate `User_Obsidian_Vault/`; they may only produce a review package for those changes and wait for explicit approval
+- `user-created` jobs do not require per-run approval when a run stays inside its approved `Agent_Obsidian_Vault/` scope and artifact type
+- `agent-created` follow-up jobs default to `pending_approval` and become `active` only after explicit user approval
+
+Stored artifact locations:
+
+- normal job outputs live under `Agent_Obsidian_Vault/tasks/<job_slug>/runs/YYYY/MM/DD/<run_ts>--<job_id>.md`
+- review packages for job-proposed `User_Obsidian_Vault/` mutations live under `Agent_Obsidian_Vault/reviews/<job_id>/<run_ts>.md`
+
+Agent-created follow-up defaults after approval:
+
+- `allowed_write_prefixes` remain limited to approved agent-owned paths
+- `approval_mode` remains `on_create` for agent-vault artifact writes and `per_change_set` for proposed user-vault mutations
+- `min_interval` defaults to `6h`
+- `max_runs` defaults to `30`
+- `expires_at` must be no more than `30d` after approval
+- `allow_child_jobs` remains `false`
+- self-rescheduling is allowed only for the same job and only without widening write scope, cadence, `max_runs`, or `expires_at`
+
+```yaml
+job_run_result:
+  artifact_paths:
+    - string
+  review_request_id: uuid | null
+  policy_decision: allow | deny | review_required
+```
+
+Every auto-written artifact must emit audit data containing `job_id`, `job_run_id`, `approval_mode`, `artifact_paths`, and `policy_decision`.
 
 ## Web Search Design
 
@@ -482,6 +694,35 @@ Suggested minimum tables:
 - `review_requests`
 - `audit_events`
 
+Audit visibility contract:
+
+```yaml
+audit_payload:
+  log_visibility: system_redacted | operator_raw
+  retention_class: success_raw | failed_job_raw | denied_write_raw | audit_metadata
+```
+
+Logging model:
+
+- `system/application logs` must stay structured and redacted
+- `operator debug/audit` may include raw prompts, OCR text, and note excerpts under the selected `Debug-first` posture
+- secrets, access tokens, auth headers, Git credentials, and raw binary attachment bytes are forbidden in both sinks
+
+Retention policy:
+
+| retention_class | Content | Retention |
+| --- | --- | --- |
+| `success_raw` | Raw prompts, OCR text, and note excerpts for successful requests | `7d` |
+| `failed_job_raw` | Raw prompts, OCR text, and note excerpts for failed jobs | `14d` |
+| `denied_write_raw` | Raw prompts, OCR text, and note excerpts for denied write attempts | `30d` |
+| `audit_metadata` | Structured audit events, review decisions, delivery metadata, and idempotency records | `365d` |
+
+Retention enforcement:
+
+- retention sweeps must purge expired raw payloads by class while keeping surviving metadata references valid
+- `audit_metadata` must remain queryable after raw payload purge
+- operator-visible access to `operator_raw` data must be narrower than general application log access
+
 ### Secrets
 
 Examples:
@@ -493,14 +734,13 @@ Examples:
 
 Secrets must never be stored in the knowledge vault.
 
-Exact redaction and retention boundaries for logs, prompts, OCR output, and note content remain `TBD`.
-
 ## Failure Modes
 
 ### Telegram Delivery Failure
 
 - retry outbound send
 - keep idempotency by outbound request key
+- return the previously stored delivery result when the same outbound key is replayed
 
 ### Vault Conflict
 
@@ -517,6 +757,7 @@ Exact redaction and retention boundaries for logs, prompts, OCR output, and note
 ### Duplicate Job Execution
 
 - use a lock keyed by job run identity
+- reuse the existing `job_run_id` when the same `job-run:<job_id>:<scheduled_at>` key is observed again
 
 ### Session Growth
 
@@ -527,25 +768,7 @@ Exact redaction and retention boundaries for logs, prompts, OCR output, and note
 
 These items are intentionally unresolved and must not be treated as implementation-ready decisions:
 
-### Mutation and Review Flow
-
-- `TBD-01` pre-approval staging model for vault mutations
-  Comment: define recovery for partially successful approved changes, especially `commit ok -> push failed -> PR not created`.
-- `TBD-02` whether the runtime uses a separate vault clone or worktree from the user's Obsidian clone
-  Comment: this decision affects isolation from the live Obsidian workspace, sync conflicts, and file-watcher behavior.
-- `TBD-03` exact branch naming convention for assistant-generated review branches
-  Comment: also decide cleanup policy for abandoned or superseded review branches.
-- `TBD-04` canonical `session_state` schema for `pending_tasks`, `open_loops`, and `decisions`
-  Comment: the document currently references multiple shapes; one schema should be normative before prompt builders and persistence models are implemented.
-
-### Scheduled Writes
-
-- `TBD-05` whether scheduled jobs may write directly to the vault
-  Comment: if yes, define where job-produced artifacts live when results are stored instead of only sent to Telegram.
-- `TBD-06` whether scheduled writes always require explicit user approval
-  Comment: clarify whether user-created and agent-created jobs share the same default approval policy.
-- `TBD-07` whether agent-created follow-up jobs need stricter limits than user-created jobs
-  Comment: stricter limits likely need to cover write scopes, schedule frequency, and self-rescheduling.
+Resolved TBD numbers are intentionally omitted below so references stay stable across revisions.
 
 ### Integrations and Providers
 
@@ -560,23 +783,12 @@ These items are intentionally unresolved and must not be treated as implementati
 - `TBD-13` whether Redis is optional or required in the MVP
   Comment: document which queue, locking, and retry guarantees degrade or disappear when Redis is not present.
 - `TBD-14` exact sync strategy for the vault working copy
-  Comment: this is coupled with the separate clone/worktree decision and conflict resolution behavior.
+  Comment: review-flow fetch and replay behavior is fixed above; broader background sync cadence and non-review conflict handling remain open.
 - `TBD-15` deployment-time secret management beyond local development
 
-### Safety and Audit Details
+## ADR References
 
-- `TBD-16` path canonicalization and symlink-handling rules
-  Comment: include the case where Obsidian attachment configuration resolves outside approved write roots.
-- `TBD-17` logging redaction boundaries
-  Comment: define whether raw prompts, OCR text, and note excerpts may appear in operator-visible logs.
-- `TBD-18` retention policy for prompts, OCR output, and audit events
-  Comment: retention may need to differ for successful requests, denied writes, and failed jobs.
-- `TBD-19` inbound and outbound idempotency keys, deduplication windows, and retention
-  Comment: this is needed to make Telegram retries and duplicate job delivery behavior deterministic.
-
-## Suggested ADRs
-
-The following ADRs should be created once the related decisions are locked:
+The following ADRs capture implemented decisions or reserve slots for decisions that should be written down once they are locked:
 
 1. `ADR-001-custom-orchestrator.md`
 2. `ADR-002-python-backend.md`
@@ -584,3 +796,5 @@ The following ADRs should be created once the related decisions are locked:
 4. `ADR-004-topic-as-workspace.md`
 5. `ADR-005-no-shell-runtime.md`
 6. `ADR-006-git-approval-flow.md`
+7. `ADR-007-scheduled-write-policy.md`
+8. `ADR-008-session-state-schema.md`
