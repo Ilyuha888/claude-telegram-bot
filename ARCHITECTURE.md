@@ -16,6 +16,10 @@ This document is the technical source of truth for the assistant runtime. It des
 - File mutations must go through policy-controlled tools and an approval flow.
 - Long-term knowledge lives in the vault and Git history, not in raw chat transcripts.
 - Initial LLM provider: Z.ai behind an `LLMClient` abstraction.
+- Telegram Bot API integration uses `python-telegram-bot` v22+ as a client/types layer, not as the runtime control plane.
+- Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
+- MVP web search, when enabled, uses Z.ai built-in web search in chat instead of a provider-agnostic runtime search tool.
+- LinkedIn and Google Calendar remain documented post-MVP seams, not V1 implementation targets.
 - Vault mutation review flow uses a service-owned vault clone with isolated per-review worktrees.
 - Review branches are created per approved `ReviewRequest`, not per workspace.
 - `SessionState` is versioned and typed; `pending_tasks`, `open_loops`, and `decisions` are structured collections.
@@ -27,7 +31,7 @@ The runtime is application-first:
 1. The outside world sends events.
 2. The runtime normalizes them into commands.
 3. The orchestrator builds context and invokes the LLM.
-4. The LLM may call only registered tools with typed contracts.
+4. The LLM may call only registered runtime tools with typed contracts. Provider-native model capabilities, when enabled, are configured explicitly by the orchestrator and are not treated as runtime tools.
 5. Tool side effects are checked by policy and recorded in audit logs.
 
 ## High-Level Components
@@ -39,11 +43,12 @@ flowchart TD
     SESS --> ORCH[Agent Orchestrator]
     ORCH --> PROMPT[Prompt Builder]
     ORCH --> TOOLRT[Tool Runtime]
+    ORCH --> LLM[LLM Client]
     TOOLRT --> VAULT[Vault Service]
     TOOLRT --> GIT[Git Service]
     TOOLRT --> JOBS[Scheduler Service]
-    TOOLRT --> WEB[Web Search Service]
     TOOLRT --> MEDIA[Media Service]
+    LLM --> ZAI[Z.ai]
     ORCH --> OUT[Outbound Renderer]
     OUT --> TG
 
@@ -59,6 +64,8 @@ flowchart TD
 - receives inbound updates
 - extracts text, links, topic identifiers, and media metadata
 - hands off normalized events to the runtime
+- uses `python-telegram-bot` v22+ for typed Telegram objects and Bot API transport
+- does not delegate orchestration, routing, or scheduling to library dispatchers or job queues
 
 ### Session Manager
 
@@ -70,6 +77,7 @@ flowchart TD
 
 - builds prompts from session state, vault context, and tool results
 - invokes the LLM
+- enables provider-native model capabilities such as Z.ai web search only on explicitly allowed turns
 - validates tool calls and handles the tool loop
 - renders the final assistant response
 
@@ -107,7 +115,7 @@ Single Docker Compose deployment:
 - `api` for webhook and admin endpoints
 - `worker` for scheduled and background jobs
 - `postgres` for runtime data
-- `redis` as an optional queue or locking layer
+- `redis` as an optional accelerator for wake-up hints, rate-limit counters, or short-TTL caches
 - optional helper service for vault sync or file watching
 
 ### Later on a VPS
@@ -115,6 +123,24 @@ Single Docker Compose deployment:
 - the same service split can be preserved
 - the vault working copy lives on persistent storage
 - backups cover Postgres, the vault working copy, and secrets
+
+## Runtime Infrastructure Contracts
+
+### Background Execution Storage
+
+- Postgres is required for runtime metadata, job queue state, retry state, idempotency records, durable outbound delivery records, and worker locking or leasing.
+- Redis is optional in the MVP and may be used only for wake-up hints, short-TTL caches, and rate-limit counters.
+- Redis must never be the sole holder of job state, retry state, or deduplication state.
+
+No-Redis behavior:
+
+| Capability | Postgres-only baseline | Optional Redis accelerator |
+| --- | --- | --- |
+| Job claim and retry durability | durable in Postgres | unchanged |
+| Duplicate suppression and idempotency | durable in Postgres | unchanged |
+| Worker wake-up latency | DB polling | lower latency push or hinting |
+| Burst smoothing | bounded by DB polling cadence | better burst absorption |
+| Rate-limit counters or ephemeral caches | unavailable unless derived from Postgres | available in memory with TTL |
 
 ## Data Boundaries
 
@@ -216,6 +242,11 @@ Core entities:
 - `ReviewRequest`
 - `ApprovalDecision`
 - `PullRequestRef`
+
+Implementation boundary:
+
+- `Dulwich` handles repository operations inside the service-owned vault clone and review worktrees
+- PR creation stays behind a separate forge-specific HTTP adapter and is not delegated to the Git library
 
 ### Scheduler Context
 
@@ -373,7 +404,6 @@ Read-only tools:
 - `vault.list_directory`
 - `git.diff_status`
 - `jobs.list`
-- `web.search`
 
 Controlled-write tools:
 
@@ -568,6 +598,16 @@ Branch naming and cleanup:
 - local staging branches and worktrees must be deleted immediately after terminal states
 - remote review branches should be deleted after PR merge or close, and superseded or abandoned branches should be swept after `14d`
 
+## Vault Sync Contract
+
+- The sync rules below depend on the already-approved working-copy topology and do not reopen that topology decision.
+- Git remote is the only freshness boundary for runtime-visible vault state.
+- Unsynced local Obsidian edits are out of scope for MVP visibility until they are pushed to the Git remote.
+- Background sync refreshes the runtime-managed working copy every `60s`.
+- Read operations may use the last successful sync state, but the visible staleness budget is capped at `60s`.
+- Mutation and review preparation always start with an immediate fresh fetch and a clean base state.
+- If fetch, fast-forward, replay, rebase, or push detects divergence, the runtime must stop the write flow and create a conflict review instead of auto-resolving the vault state.
+
 ## Scheduler Model
 
 ### Why the Worker Is Separate
@@ -660,14 +700,32 @@ Every auto-written artifact must emit audit data containing `job_id`, `job_run_i
 
 ## Web Search Design
 
-Provider interface:
+MVP search path:
 
-```python
-class WebSearchProvider(Protocol):
-    async def search(self, query: str, *, top_k: int = 5) -> list[SearchHit]: ...
-```
+- web search is provided by Z.ai built-in web search in chat when the orchestrator enables that capability on a given turn
+- search is not exposed as a provider-agnostic runtime tool in V1 and does not use a separate search-vendor adapter
+- the trade-off is weaker auditability and portability than a dedicated `web.search` tool, but it avoids introducing a second search vendor for MVP
+- search-derived content must not be treated as deterministic tool output or as the sole source of truth for critical side effects
+- if the product later needs raw search hits, provider portability, or separate search billing controls, reintroduce a `WebSearchProvider` adapter in a later ADR
 
-The provider boundary is confirmed. The concrete provider choice remains `TBD`.
+Operational notes:
+
+- the same Z.ai account is used for both model calls and web search capability enablement
+- enabling Z.ai web search may still incur Z.ai tool charges; it is not a free capability simply because the model provider is unchanged
+
+## Post-MVP External Integrations
+
+### LinkedIn
+
+- LinkedIn is not part of MVP implementation scope
+- the first future phase is limited to consumer OAuth/OIDC profile access plus optional member-authored share flows
+- page management, marketing APIs, company analytics, and background polling require a separate ADR and remain out of scope
+
+### Google Calendar
+
+- Google Calendar is not part of MVP implementation scope
+- the first future phase is limited to explicit user-invoked availability lookup or event create/update flows
+- background sync, watch channels, and autonomous calendar writes require a separate ADR and remain out of scope
 
 ## Observability and Security
 
@@ -730,9 +788,19 @@ Examples:
 - Telegram bot token
 - Z.ai API key
 - Git credentials or deploy key
-- optional search provider keys
+- future external provider or OAuth client credentials
 
 Secrets must never be stored in the knowledge vault.
+
+Deployment-time policy:
+
+- Required secrets live outside the repository in a root-owned host directory such as `/etc/personal-assistant/` or `/srv/personal-assistant/secrets/`.
+- Containers receive secrets through `env_file` configuration and read-only file mounts.
+- Git credentials stay file-based, for example via a mounted SSH deploy key, rather than inline environment variables.
+- Missing or unreadable required secrets must fail startup deterministically.
+- MVP deployments do not require an external secret manager.
+- Logs, audit records, and review summaries must redact secret values and credential material.
+- Backups of secret material must use encrypted host-level backups or manual reprovisioning rather than storing secrets in Git or the knowledge vault.
 
 ## Failure Modes
 
@@ -770,21 +838,7 @@ These items are intentionally unresolved and must not be treated as implementati
 
 Resolved TBD numbers are intentionally omitted below so references stay stable across revisions.
 
-### Integrations and Providers
-
-- `TBD-08` Telegram bot library choice
-- `TBD-09` Git integration library choice
-- `TBD-10` web search provider choice
-- `TBD-11` LinkedIn API integration design
-- `TBD-12` Google Calendar API integration design
-
-### Runtime Infrastructure
-
-- `TBD-13` whether Redis is optional or required in the MVP
-  Comment: document which queue, locking, and retry guarantees degrade or disappear when Redis is not present.
-- `TBD-14` exact sync strategy for the vault working copy
-  Comment: review-flow fetch and replay behavior is fixed above; broader background sync cadence and non-review conflict handling remain open.
-- `TBD-15` deployment-time secret management beyond local development
+No MVP-scoped open decisions remain in this document. New unresolved items should be added here only when they block implementation or materially change safety boundaries.
 
 ## ADR References
 
@@ -798,3 +852,4 @@ The following ADRs capture implemented decisions or reserve slots for decisions 
 6. `ADR-006-git-approval-flow.md`
 7. `ADR-007-scheduled-write-policy.md`
 8. `ADR-008-session-state-schema.md`
+9. `ADR-009-integration-provider-decisions.md`

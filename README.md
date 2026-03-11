@@ -42,7 +42,7 @@ The goal is not to build a magical autonomous agent. The goal is to build a reli
    - recurring jobs
    - user-created jobs with approved `Agent_Obsidian_Vault/` artifact scopes
    - agent-created follow-up jobs that start pending approval and stay within agent-owned write scopes
-6. Web search through an adapter boundary.
+6. Optional web search via Z.ai built-in web search in chat.
 
 ### Out of Scope for V1
 
@@ -50,7 +50,9 @@ The goal is not to build a magical autonomous agent. The goal is to build a reli
 - full voice UX
 - multi-user support
 - arbitrary script execution from the runtime LLM
-- production-grade external calendar or LinkedIn automation
+- LinkedIn and Google Calendar integrations beyond documented post-MVP seams
+- visibility into local vault edits before they are pushed to Git
+- external secret manager integration
 
 ## Confirmed Decisions
 
@@ -61,7 +63,14 @@ The goal is not to build a magical autonomous agent. The goal is to build a reli
 - Safety model: no arbitrary shell access for the runtime LLM.
 - Workspace model: Telegram topics map to long-lived workspaces.
 - LLM provider at project start: Z.ai behind an `LLMClient` interface.
+- Telegram Bot API integration uses `python-telegram-bot` v22+ as a client/types layer, not as the runtime control plane.
+- Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
+- MVP web search, when enabled, uses Z.ai built-in web search in chat; this may still incur Z.ai tool charges and is not a deterministic runtime tool output.
+- LinkedIn and Google Calendar remain post-MVP integration seams, not V1 implementation targets.
 - Scheduled jobs may auto-persist only to approved `Agent_Obsidian_Vault/` artifact paths; `User_Obsidian_Vault/` changes remain review-gated.
+- Background execution is Postgres-first; Redis is optional and never the sole holder of queue or retry state.
+- Vault freshness uses Git remote as the only runtime sync boundary; unsynced local Obsidian edits are out of scope for MVP visibility.
+- Deployment beyond local development targets a single VPS with host-managed secrets outside the repository; MVP does not require an external secret manager.
 
 ## High-Level Architecture
 
