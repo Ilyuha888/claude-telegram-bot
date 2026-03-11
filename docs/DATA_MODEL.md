@@ -8,7 +8,7 @@ Global rules:
 - all timestamps are stored in UTC
 - row identifiers use UUID or ULID-like opaque strings; external callers must not derive meaning from them
 - retention sweeps may purge raw payload columns, but must not break surviving metadata references
-- Redis may cache or accelerate reads, but durable workflow correctness must survive with Postgres alone
+- durable workflow correctness must remain reconstructible from Postgres-backed state
 
 ## Retention Classes
 
@@ -226,7 +226,7 @@ Required columns:
 - `vault_mutation_id`
 - `review_request_id`
 - `mutation_sequence`
-- `operation` = `create_note | update_note | move_note | create_directory | attach_image`
+- `operation` = `create_note | update_note | move_note | delete_note | create_directory | move_directory | delete_directory | attach_image`
 - `requested_path` nullable
 - `canonical_path` nullable
 - `effective_path` nullable
@@ -531,7 +531,7 @@ Rules:
 
 These invariants must not be broken by migrations:
 
-- no workflow relies on Redis as the only durable source of queue, retry, or idempotency state
+- durable queue, retry, and idempotency behavior remains reconstructible from Postgres-backed state
 - `review_requests.change_manifest_json` remains sufficient to rebuild staging after filesystem loss
 - every explicit review approval or rejection remains reconstructible from `approval_decisions` without relying on transient Telegram payloads
 - review approval replay always compares against the latest fetched base branch

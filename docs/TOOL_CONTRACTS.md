@@ -247,6 +247,12 @@ JobsListResult:
 
 ## Controlled-Write Tools
 
+Write-root selector:
+
+- `target_root: user | agent = user`
+- `target_root = agent` requests resolution under `Agent_Obsidian_Vault/`
+- `target_root = user` keeps resolution inside approved user-owned write roots
+
 ### `vault.create_note`
 
 - Purpose: create a new Markdown note inside an approved vault root.
@@ -257,6 +263,7 @@ JobsListResult:
 ```yaml
 VaultCreateNoteRequest:
   path: string
+  target_root: user | agent = user
   title: string | null
   content_markdown: string
   frontmatter: object | null
@@ -282,6 +289,7 @@ VaultCreateNoteResult:
   - `tool_name`
   - `requested_path`
   - `effective_path`
+  - `target_root`
   - `content_sha256`
   - `policy_decision`
 - Main errors:
@@ -300,6 +308,7 @@ VaultCreateNoteResult:
 ```yaml
 VaultUpdateNoteRequest:
   path: string
+  target_root: user | agent = user
   content_markdown: string
   frontmatter: object | null
   expected_content_sha256: string | null
@@ -324,6 +333,7 @@ VaultUpdateNoteResult:
   - `tool_name`
   - `requested_path`
   - `effective_path`
+  - `target_root`
   - `expected_content_sha256`
   - `new_content_sha256`
   - `policy_decision`
@@ -345,6 +355,7 @@ VaultUpdateNoteResult:
 VaultMoveNoteRequest:
   source_path: string
   destination_path: string
+  target_root: user | agent = user
   move_sibling_files_dir: bool = true
 ```
 
@@ -368,7 +379,51 @@ VaultMoveNoteResult:
   - `tool_name`
   - `source_path`
   - `destination_path`
+  - `target_root`
   - `moved_related_paths`
+  - `policy_decision`
+- Main errors:
+  - `validation_error`
+  - `not_found`
+  - `policy_denied`
+  - `conflict`
+
+### `vault.delete_note`
+
+- Purpose: delete a Markdown note under review-gated rules and optionally delete its sibling `files/` directory.
+- Side-effect class: `filesystem_write`
+- Required policies: `path_allowlist`, `filetype_allowlist`, `review_flow`
+- Input schema:
+
+```yaml
+VaultDeleteNoteRequest:
+  note_path: string
+  target_root: user | agent = user
+  delete_sibling_files_dir: bool = false
+  expected_content_sha256: string | null
+```
+
+- Output schema:
+
+```yaml
+VaultDeleteNoteResult:
+  ok: bool
+  mutation:
+    operation: delete_note
+    note_path: string
+    deleted_related_paths:
+      - string
+    review_required: bool
+  error_code: string | null
+```
+
+- Audit fields:
+  - `workspace_id`
+  - `tool_name`
+  - `note_path`
+  - `target_root`
+  - `delete_sibling_files_dir`
+  - `expected_content_sha256`
   - `policy_decision`
 - Main errors:
   - `validation_error`
@@ -386,6 +441,7 @@ VaultMoveNoteResult:
 ```yaml
 VaultCreateDirectoryRequest:
   path: string
+  target_root: user | agent = user
   create_parents: bool = true
 ```
 
@@ -407,9 +463,93 @@ VaultCreateDirectoryResult:
   - `tool_name`
   - `requested_path`
   - `effective_path`
+  - `target_root`
   - `policy_decision`
 - Main errors:
   - `validation_error`
+  - `policy_denied`
+  - `conflict`
+
+### `vault.move_directory`
+
+- Purpose: move or rename a directory within approved roots without widening write scope.
+- Side-effect class: `filesystem_write`
+- Required policies: `path_allowlist`, `review_flow`
+- Input schema:
+
+```yaml
+VaultMoveDirectoryRequest:
+  source_path: string
+  destination_path: string
+  target_root: user | agent = user
+```
+
+- Output schema:
+
+```yaml
+VaultMoveDirectoryResult:
+  ok: bool
+  mutation:
+    operation: move_directory
+    source_path: string
+    destination_path: string
+    review_required: bool
+  error_code: string | null
+```
+
+- Audit fields:
+  - `workspace_id`
+  - `tool_name`
+  - `source_path`
+  - `destination_path`
+  - `target_root`
+  - `policy_decision`
+- Main errors:
+  - `validation_error`
+  - `not_found`
+  - `policy_denied`
+  - `conflict`
+
+### `vault.delete_directory`
+
+- Purpose: delete a directory inside an approved root under review-gated rules.
+- Side-effect class: `filesystem_write`
+- Required policies: `path_allowlist`, `review_flow`
+- Input schema:
+
+```yaml
+VaultDeleteDirectoryRequest:
+  path: string
+  target_root: user | agent = user
+  recursive: bool = false
+  require_empty: bool = true
+```
+
+- Output schema:
+
+```yaml
+VaultDeleteDirectoryResult:
+  ok: bool
+  mutation:
+    operation: delete_directory
+    requested_path: string
+    effective_path: string
+    review_required: bool
+  error_code: string | null
+```
+
+- Audit fields:
+  - `workspace_id`
+  - `tool_name`
+  - `requested_path`
+  - `effective_path`
+  - `target_root`
+  - `recursive`
+  - `require_empty`
+  - `policy_decision`
+- Main errors:
+  - `validation_error`
+  - `not_found`
   - `policy_denied`
   - `conflict`
 
@@ -423,6 +563,7 @@ VaultCreateDirectoryResult:
 ```yaml
 VaultAttachImageRequest:
   note_path: string
+  target_root: user | agent = user
   source_upload_id: string
   original_filename: string | null
   mime_type: string
@@ -452,6 +593,7 @@ VaultAttachImageResult:
   - `workspace_id`
   - `tool_name`
   - `note_path`
+  - `target_root`
   - `source_upload_id`
   - `requested_asset_path`
   - `effective_asset_path`
@@ -476,7 +618,7 @@ GitPrepareReviewRequest:
   base_branch: string = "main"
   theme_slug_hint: string | null
   change_set:
-    - operation: create_note | update_note | move_note | create_directory | attach_image
+    - operation: create_note | update_note | move_note | delete_note | create_directory | move_directory | delete_directory | attach_image
       path: string | null
       source_path: string | null
       destination_path: string | null

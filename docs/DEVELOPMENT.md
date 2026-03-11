@@ -19,10 +19,6 @@ Required for the first scaffold:
 - Telegram bot token
 - Z.ai API access
 
-Optional:
-
-- Redis for accelerator-only local testing
-
 ## Environment Contract
 
 These names are the required environment contract for the first scaffold.
@@ -42,7 +38,6 @@ These names are the required environment contract for the first scaffold.
 
 ### Optional variables
 
-- `REDIS_URL`
 - `OPERATOR_DEBUG_AUDIT_ENABLED`
 - `VAULT_SYNC_INTERVAL_SECONDS`
 - `WORKER_POLL_INTERVAL_SECONDS`
@@ -99,7 +94,6 @@ When the scaffold is added, it must support a local stack with these components:
 - `api` for webhook receive and health endpoints
 - `worker` for scheduled jobs and replay/retry flows
 - `postgres` for durable runtime state
-- optional `redis` for accelerator-only behavior
 
 The scaffold should provide:
 
@@ -133,7 +127,6 @@ Never do the following in the first implementation:
 - store secrets in the repository
 - write into the user's live Obsidian clone
 - bypass review-before-commit for `User_Obsidian_Vault/`
-- make Redis the sole holder of queue, retry, or idempotency state
 
 If one of these seems necessary, stop and document the trade-off in a new ADR first.
 

@@ -117,7 +117,6 @@ Single Docker Compose deployment:
 - `api` for webhook and admin endpoints
 - `worker` for scheduled and background jobs
 - `postgres` for runtime data
-- `redis` as an optional accelerator for wake-up hints, rate-limit counters, or short-TTL caches
 - optional helper service for vault sync or file watching
 
 ### Later on a VPS
@@ -131,18 +130,8 @@ Single Docker Compose deployment:
 ### Background Execution Storage
 
 - Postgres is required for runtime metadata, job queue state, retry state, idempotency records, durable outbound delivery records, and worker locking or leasing.
-- Redis is optional in the MVP and may be used only for wake-up hints, short-TTL caches, and rate-limit counters.
-- Redis must never be the sole holder of job state, retry state, or deduplication state.
-
-No-Redis behavior:
-
-| Capability | Postgres-only baseline | Optional Redis accelerator |
-| --- | --- | --- |
-| Job claim and retry durability | durable in Postgres | unchanged |
-| Duplicate suppression and idempotency | durable in Postgres | unchanged |
-| Worker wake-up latency | DB polling | lower latency push or hinting |
-| Burst smoothing | bounded by DB polling cadence | better burst absorption |
-| Rate-limit counters or ephemeral caches | unavailable unless derived from Postgres | available in memory with TTL |
+- Background execution correctness, replay, and recovery are defined entirely by Postgres-backed state.
+- Any future ephemeral accelerators must remain derivable from Postgres-backed state and must not change the durable workflow contract.
 
 ## Data Boundaries
 
@@ -414,7 +403,10 @@ Controlled-write tools:
 - `vault.create_note`
 - `vault.update_note`
 - `vault.move_note`
+- `vault.delete_note`
 - `vault.create_directory`
+- `vault.move_directory`
+- `vault.delete_directory`
 - `vault.attach_image`
 - `jobs.create`
 - `jobs.cancel`
@@ -449,6 +441,7 @@ These are examples rather than rigid schema contracts. The user vault is intenti
 Confirmed policy:
 
 - writes are limited to approved roots inside `User_Obsidian_Vault/` and `Agent_Obsidian_Vault/`
+- controlled write tools accept `target_root: user | agent` to make the intended write root explicit
 - hidden system paths such as `.git/` and `.obsidian/` are not writable from the runtime
 - executable files are not valid write targets
 
