@@ -100,10 +100,10 @@ Detailed technical design lives in [ARCHITECTURE.md](ARCHITECTURE.md). Agent-spe
 
 Implementation-ready contracts for the first scaffold live in:
 
-- [TOOL_CONTRACTS.md](TOOL_CONTRACTS.md) for runtime tool payloads, policy checks, and audit fields
-- [DATA_MODEL.md](DATA_MODEL.md) for Postgres entities, state transitions, and retention semantics
-- [API_SURFACES.md](API_SURFACES.md) for HTTP and Telegram transport boundaries
-- [DEVELOPMENT.md](DEVELOPMENT.md) for local bootstrap expectations and MVP smoke-test criteria
+- [TOOL_CONTRACTS.md](docs/TOOL_CONTRACTS.md) for runtime tool payloads, policy checks, and audit fields
+- [DATA_MODEL.md](docs/DATA_MODEL.md) for Postgres entities, state transitions, and retention semantics
+- [API_SURFACES.md](docs/API_SURFACES.md) for HTTP and Telegram transport boundaries
+- [DEVELOPMENT.md](docs/DEVELOPMENT.md) for local bootstrap expectations and MVP smoke-test criteria
 
 ## Knowledge Repository Layout
 

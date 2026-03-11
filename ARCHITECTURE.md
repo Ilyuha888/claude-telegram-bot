@@ -107,7 +107,7 @@ flowchart TD
 
 ## Deployment Topology
 
-Canonical HTTP and Telegram transport boundaries for MVP live in [API_SURFACES.md](API_SURFACES.md).
+Canonical HTTP and Telegram transport boundaries for MVP live in [API_SURFACES.md](docs/API_SURFACES.md).
 
 ### Local First
 
@@ -372,7 +372,7 @@ Compaction rules:
 
 ## Tool Runtime Design
 
-Canonical request and response payloads for the V1 tool surface live in [TOOL_CONTRACTS.md](TOOL_CONTRACTS.md). This document keeps only the stable architectural constraints and tool categories.
+Canonical request and response payloads for the V1 tool surface live in [TOOL_CONTRACTS.md](docs/TOOL_CONTRACTS.md). This document keeps only the stable architectural constraints and tool categories.
 
 ### Tool Contract
 
@@ -733,7 +733,7 @@ Operational notes:
 
 ## Observability and Security
 
-Canonical runtime persistence contracts, state transitions, and retention mappings live in [DATA_MODEL.md](DATA_MODEL.md).
+Canonical runtime persistence contracts, state transitions, and retention mappings live in [DATA_MODEL.md](docs/DATA_MODEL.md).
 
 ### Minimum Audit Coverage
 
@@ -851,12 +851,12 @@ No MVP-scoped open decisions remain in this document. New unresolved items shoul
 
 The following ADRs capture implemented decisions or reserve slots for decisions that should be written down once they are locked:
 
-1. `ADR-001-custom-orchestrator.md`
-2. `ADR-002-python-backend.md`
-3. `ADR-003-postgres-runtime-store.md`
-4. `ADR-004-topic-as-workspace.md`
-5. `ADR-005-no-shell-runtime.md`
-6. `ADR-006-git-approval-flow.md`
-7. `ADR-007-scheduled-write-policy.md`
-8. `ADR-008-session-state-schema.md`
-9. `ADR-009-integration-provider-decisions.md`
+1. [ADR-001-custom-orchestrator.md](docs/adr/ADR-001-custom-orchestrator.md)
+2. [ADR-002-python-backend.md](docs/adr/ADR-002-python-backend.md)
+3. [ADR-003-postgres-runtime-store.md](docs/adr/ADR-003-postgres-runtime-store.md)
+4. [ADR-004-topic-as-workspace.md](docs/adr/ADR-004-topic-as-workspace.md)
+5. [ADR-005-no-shell-runtime.md](docs/adr/ADR-005-no-shell-runtime.md)
+6. [ADR-006-git-approval-flow.md](docs/adr/ADR-006-git-approval-flow.md)
+7. [ADR-007-scheduled-write-policy.md](docs/adr/ADR-007-scheduled-write-policy.md)
+8. [ADR-008-session-state-schema.md](docs/adr/ADR-008-session-state-schema.md)
+9. [ADR-009-integration-provider-decisions.md](docs/adr/ADR-009-integration-provider-decisions.md)
