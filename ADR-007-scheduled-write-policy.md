@@ -28,4 +28,4 @@ The unresolved question was how far scheduled automation should be allowed to go
 - Recurring automation can store durable machine-managed artifacts without forcing a manual approval step on every run.
 - User-owned notes remain behind explicit review and approval, even when a scheduled run generated the proposed content.
 - User-created and agent-created jobs do not share the same default approval policy.
-- This ADR does not resolve the still-open staging mechanics from `TBD-01`; approved job writes still flow through the existing validated mutation pipeline.
+- Scheduled writes rely on the accepted staging and replay model documented in `ADR-006` and `ARCHITECTURE.md`; this ADR only narrows which write scopes may bypass per-run approval.

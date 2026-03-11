@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the technical source of truth for the assistant runtime. It describes confirmed architectural decisions, core system design, and open decisions that are intentionally left as `TBD`.
+This document is the technical source of truth for the assistant runtime. It describes confirmed architectural decisions, core system design, and the boundary for any future unresolved items that may be introduced as `TBD`.
 
 ## Confirmed Decisions
 
@@ -106,6 +106,8 @@ flowchart TD
 - keeps retries and locks separate from chat handling
 
 ## Deployment Topology
+
+Canonical HTTP and Telegram transport boundaries for MVP live in [API_SURFACES.md](API_SURFACES.md).
 
 ### Local First
 
@@ -369,6 +371,8 @@ Compaction rules:
 5. Drop terminal tasks and superseded decisions from the compacted `session_state`.
 
 ## Tool Runtime Design
+
+Canonical request and response payloads for the V1 tool surface live in [TOOL_CONTRACTS.md](TOOL_CONTRACTS.md). This document keeps only the stable architectural constraints and tool categories.
 
 ### Tool Contract
 
@@ -729,6 +733,8 @@ Operational notes:
 
 ## Observability and Security
 
+Canonical runtime persistence contracts, state transitions, and retention mappings live in [DATA_MODEL.md](DATA_MODEL.md).
+
 ### Minimum Audit Coverage
 
 The runtime should log:
@@ -750,6 +756,7 @@ Suggested minimum tables:
 - `job_runs`
 - `vault_mutations`
 - `review_requests`
+- `approval_decisions`
 - `audit_events`
 
 Audit visibility contract:

@@ -96,6 +96,15 @@ Core subsystems:
 
 Detailed technical design lives in [ARCHITECTURE.md](ARCHITECTURE.md). Agent-specific operating rules live in [AGENTS.md](AGENTS.md).
 
+## Implementation Specs
+
+Implementation-ready contracts for the first scaffold live in:
+
+- [TOOL_CONTRACTS.md](TOOL_CONTRACTS.md) for runtime tool payloads, policy checks, and audit fields
+- [DATA_MODEL.md](DATA_MODEL.md) for Postgres entities, state transitions, and retention semantics
+- [API_SURFACES.md](API_SURFACES.md) for HTTP and Telegram transport boundaries
+- [DEVELOPMENT.md](DEVELOPMENT.md) for local bootstrap expectations and MVP smoke-test criteria
+
 ## Knowledge Repository Layout
 
 Current structure for the knowledge repository:
@@ -125,6 +134,7 @@ The MVP is done when the assistant can:
 ## Open Decisions and TBDs
 
 The canonical open-decision list lives in [ARCHITECTURE.md](ARCHITECTURE.md#tbd--open-decisions).
+At the moment, no MVP-scoped open decisions remain.
 
 ## Roadmap
 
@@ -161,4 +171,4 @@ The canonical open-decision list lives in [ARCHITECTURE.md](ARCHITECTURE.md#tbd-
 ### Phase 4
 
 - external integrations behind adapters
-- broader automation capabilities after the open decisions are resolved
+- broader automation capabilities after MVP runtime flows are stable
