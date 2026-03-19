@@ -26,12 +26,65 @@ The agent must not:
 ## Global Working Agreements
 
 1. Read `README.md` and `ARCHITECTURE.md` first.
-2. Do not change architecture invariants without an ADR or explicit user instruction.
+2. Do not change architecture invariants without first recording a `quint_decision` artifact (or receiving explicit user instruction).
 3. Prefer simple deterministic services over framework-heavy abstractions.
 4. Do not add new production dependencies without a short justification.
 5. Keep the runtime repository and the knowledge repository conceptually separate.
 6. Present risky changes as proposals before implementation.
 7. For larger tasks, outline the planned file changes before editing.
+
+## Decision Records with Quint
+
+This project uses [quint-code](https://github.com/m0n0x41d/quint-code) to track engineering decisions as structured artifacts in `.quint/`. Use it whenever a choice has lasting architectural consequences or is not obvious from the code.
+
+### When to use it
+
+- You are about to violate or modify an architecture invariant
+- You are choosing between two non-trivial implementation approaches
+- You need to record why an alternative was rejected
+- A future agent would otherwise have to re-derive the reasoning
+
+Do **not** create a quint artifact for routine implementation details or obvious choices.
+
+### Workflow
+
+1. **Frame the problem** — `quint_problem` (or `/q-frame`) to define what must be decided and why.
+2. **Record a solution** — `quint_solution` (or `/q-explore`, `/q-compare`) to document options and trade-offs.
+3. **Finalize the decision** — `quint_decision` (or `/q-decide`) to lock the chosen path with rationale.
+
+For lightweight micro-decisions, use `quint_note` / `/q-note` directly — no full problem/solution cycle needed.
+
+### Key tools
+
+| Tool / Skill | When |
+|---|---|
+| `quint_problem` / `/q-frame` | Opening a new decision thread |
+| `quint_solution` / `/q-explore`, `/q-compare` | Documenting options |
+| `quint_decision` / `/q-decide` | Locking the final choice |
+| `quint_note` / `/q-note` | Quick micro-decision with rationale |
+| `quint_query` / `/q-search`, `/q-status` | Searching past decisions before starting work |
+| `quint_refresh` / `/q-refresh` | Detecting stale or superseded decisions |
+
+### `.quint/` structure
+
+```
+.quint/
+  problems/     # open and closed problem cards
+  solutions/    # solution portfolios per problem
+  decisions/    # finalized decision records
+  notes/        # micro-decisions and observations
+  evidence/     # supporting data linked to decisions
+  refresh/      # lifecycle and staleness reports
+  quint.db      # FTS5 index — do not edit manually
+```
+
+### Relationship to `docs/adr/`
+
+`docs/adr/` holds legacy ADRs written before quint was introduced. New decisions go into `.quint/` via the MCP tools. Do not create new files under `docs/adr/` manually.
+
+### Before starting significant work
+
+Run `/q-status` or `quint_query` to surface active decisions and stale artifacts relevant to your task. Do not re-litigate closed decisions without first checking whether they still apply.
 
 ## Architecture Invariants
 
