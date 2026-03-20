@@ -114,6 +114,7 @@ These rules are mandatory:
 - the knowledge vault is a separate Git repository
 - a Telegram topic is a workspace namespace, not just a chat thread
 - the source of truth for long-term knowledge is the vault plus Git history, not a transcript database
+- the platform is scoped to a single user; multi-user support is explicitly out of scope until a quint decision supersedes `dec-20260320-001`
 
 ## Repository Expectations
 
