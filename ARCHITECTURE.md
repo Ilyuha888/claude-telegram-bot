@@ -17,6 +17,7 @@ This document is the technical source of truth for the assistant runtime. It des
 - Long-term knowledge lives in the vault and Git history, not in raw chat transcripts.
 - Initial LLM provider: Z.ai behind an `LLMClient` abstraction.
 - Telegram Bot API integration uses `python-telegram-bot` v22+ as a client/types layer, not as the runtime control plane.
+- Runtime concurrency model: asyncio end-to-end (`dec-20260320-002`). All handlers are `async def` coroutines. Dulwich (sync) is always called via `asyncio.run_in_executor` — never directly from a coroutine. `asyncio.run()` inside a coroutine is forbidden. The DB driver must be async (psycopg3 async or asyncpg).
 - Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
 - MVP web search, when enabled, uses Z.ai built-in web search in chat instead of a provider-agnostic runtime search tool.
 - LinkedIn and Google Calendar remain documented post-MVP seams, not V1 implementation targets.
