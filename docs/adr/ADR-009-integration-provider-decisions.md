@@ -18,10 +18,10 @@ The remaining MVP provider questions were tightly coupled to architecture bounda
 2. The runtime does not adopt `python-telegram-bot` dispatcher, routing, or job-queue abstractions as the control plane. Webhook routing, orchestration, retries, and scheduling stay in the application.
 3. Git repository operations use `Dulwich` inside the service-owned vault clone and review worktrees.
 4. PR creation stays behind a separate forge-specific HTTP adapter. The Git library choice does not imply a forge API choice.
-5. MVP web search uses Z.ai built-in web search in chat as an explicitly enabled model capability.
+5. MVP web search uses Gemini grounding (Google Search) as an explicitly enabled per-turn model capability (`dec-20260320-003`).
 6. MVP does not expose a provider-agnostic `web.search` runtime tool. Search is a model-native capability, not a deterministic tool output.
 7. This is a deliberate trade-off: the platform gives up some tool-level auditability and provider portability in exchange for avoiding a second search vendor in MVP.
-8. Z.ai web search may still incur Z.ai tool charges. Using the same provider does not make search free.
+8. Gemini grounding may incur additional API charges; it is not free simply because the base model tier is free.
 9. LinkedIn and Google Calendar are removed from MVP implementation scope and remain documented post-MVP seams only.
 
 ## Rejected Alternatives
@@ -38,9 +38,9 @@ The remaining MVP provider questions were tightly coupled to architecture bounda
 
 An external search provider would preserve a cleaner tool boundary, but it would introduce a second search vendor and separate credentials immediately. MVP does not need that extra vendor split.
 
-### `Z.ai Web Search API` as a separate runtime tool in MVP
+### Provider-native search API as a separate runtime tool in MVP
 
-Using Z.ai's standalone search API would keep a cleaner adapter boundary than `search in chat`, but it would still be a distinct runtime search integration. MVP accepts the weaker boundary instead.
+Using a standalone search API call would keep a cleaner adapter boundary than grounding-in-chat, but it would still be a distinct runtime search integration. MVP accepts the weaker boundary instead.
 
 ## Consequences
 

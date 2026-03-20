@@ -17,7 +17,7 @@ Required for the first scaffold:
 - Postgres client tools or container access for schema inspection
 - Git access to the private knowledge-vault repository
 - Telegram bot token
-- Z.ai API access
+- Gemini API key (Google AI Studio — free tier, no credit card required)
 
 ## Environment Contract
 
@@ -30,7 +30,8 @@ These names are the required environment contract for the first scaffold.
 - `POSTGRES_DSN`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
-- `ZAI_API_KEY`
+- `OPENAI_API_KEY` (Gemini API key)
+- `OPENAI_BASE_URL` (set to `https://generativelanguage.googleapis.com/v1beta/openai/`)
 - `VAULT_REPO_URL`
 - `VAULT_BASE_BRANCH`
 - `VAULT_LOCAL_PATH`

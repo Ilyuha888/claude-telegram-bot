@@ -15,11 +15,11 @@ This document is the technical source of truth for the assistant runtime. It des
 - Runtime LLM restriction: no arbitrary shell execution.
 - File mutations must go through policy-controlled tools and an approval flow.
 - Long-term knowledge lives in the vault and Git history, not in raw chat transcripts.
-- Initial LLM provider: Z.ai behind an `LLMClient` abstraction.
+- Initial LLM provider: Gemini 2.5 Flash, accessed via the `openai` Python SDK at Google's OpenAI-compatible endpoint (`dec-20260320-003`). Provider is swappable by changing `OPENAI_BASE_URL` and `OPENAI_API_KEY` env vars with no orchestrator code changes.
 - Telegram Bot API integration uses `python-telegram-bot` v22+ as a client/types layer, not as the runtime control plane.
 - Runtime concurrency model: asyncio end-to-end (`dec-20260320-002`). All handlers are `async def` coroutines. Dulwich (sync) is always called via `asyncio.run_in_executor` — never directly from a coroutine. `asyncio.run()` inside a coroutine is forbidden. The DB driver must be async (psycopg3 async or asyncpg).
 - Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
-- MVP web search, when enabled, uses Z.ai built-in web search in chat instead of a provider-agnostic runtime search tool.
+- MVP web search, when enabled, uses Gemini grounding (Google Search) as a per-turn model capability instead of a provider-agnostic runtime search tool.
 - LinkedIn and Google Calendar remain documented post-MVP seams, not V1 implementation targets.
 - Vault mutation review flow uses a service-owned vault clone with isolated per-review worktrees.
 - Review branches are created per approved `ReviewRequest`, not per workspace.
@@ -49,7 +49,7 @@ flowchart TD
     TOOLRT --> GIT[Git Service]
     TOOLRT --> JOBS[Scheduler Service]
     TOOLRT --> MEDIA[Media Service]
-    LLM --> ZAI[Z.ai]
+    LLM --> GEMINI[Gemini 2.5 Flash]
     ORCH --> OUT[Outbound Renderer]
     OUT --> TG
 
@@ -78,7 +78,7 @@ flowchart TD
 
 - builds prompts from session state, vault context, and tool results
 - invokes the LLM
-- enables provider-native model capabilities such as Z.ai web search only on explicitly allowed turns
+- enables provider-native model capabilities such as Gemini grounding only on explicitly allowed turns
 - validates tool calls and handles the tool loop
 - renders the final assistant response
 
@@ -700,7 +700,7 @@ Every auto-written artifact must emit audit data containing `job_id`, `job_run_i
 
 MVP search path:
 
-- web search is provided by Z.ai built-in web search in chat when the orchestrator enables that capability on a given turn
+- web search is provided by Gemini grounding (Google Search) when the orchestrator enables that capability on a given turn
 - search is not exposed as a provider-agnostic runtime tool in V1 and does not use a separate search-vendor adapter
 - the trade-off is weaker auditability and portability than a dedicated `web.search` tool, but it avoids introducing a second search vendor for MVP
 - search-derived content must not be treated as deterministic tool output or as the sole source of truth for critical side effects
@@ -708,8 +708,8 @@ MVP search path:
 
 Operational notes:
 
-- the same Z.ai account is used for both model calls and web search capability enablement
-- enabling Z.ai web search may still incur Z.ai tool charges; it is not a free capability simply because the model provider is unchanged
+- Gemini grounding is opt-in per turn; it is not active by default on every model call
+- enabling Gemini grounding may incur additional Google API charges; it is not free simply because the base model tier is free
 
 ## Post-MVP External Integrations
 
@@ -787,7 +787,7 @@ Retention enforcement:
 Examples:
 
 - Telegram bot token
-- Z.ai API key
+- Gemini API key (`OPENAI_API_KEY`, used with Google's OpenAI-compatible endpoint)
 - Git credentials or deploy key
 - future external provider or OAuth client credentials
 

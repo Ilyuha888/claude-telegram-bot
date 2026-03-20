@@ -189,7 +189,7 @@ Failure model:
 These are not public network APIs, but the first scaffold should preserve them as explicit adapter seams:
 
 - `TelegramGateway` receives and normalizes inbound updates
-- `LLMClient` invokes Z.ai and optionally enables model-native web search
+- `LLMClient` invokes the configured LLM provider via the `openai` SDK and optionally enables model-native web search (Gemini grounding)
 - `VaultService` reads the synced vault working copy and writes only through policy-controlled mutation flows
 - `GitService` prepares reviews, replays approved manifests, and creates final branches and PRs through adapters
 - `SchedulerService` claims due jobs, enforces activation rules, and records `job_runs`

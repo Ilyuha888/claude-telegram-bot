@@ -763,5 +763,5 @@ JobsCancelResult:
 ## Notes
 
 - Review-gated tools may materialize staged mutations before approval, but they must not commit, push, or create a PR until the review request is approved.
-- `provider_capability_gate` applies at the orchestrator level for model-native capabilities such as Z.ai web search; it is not a standalone V1 tool.
+- `provider_capability_gate` applies at the orchestrator level for model-native capabilities such as Gemini grounding; it is not a standalone V1 tool.
 - Any incompatible schema change in this document must be paired with an update to `ARCHITECTURE.md` or a new ADR when it changes a stable boundary.
