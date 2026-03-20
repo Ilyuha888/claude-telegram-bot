@@ -15,9 +15,10 @@ This document is the technical source of truth for the assistant runtime. It des
 - Runtime LLM restriction: no arbitrary shell execution.
 - File mutations must go through policy-controlled tools and an approval flow.
 - Long-term knowledge lives in the vault and Git history, not in raw chat transcripts.
-- Initial LLM provider: Gemini 2.5 Flash, accessed via the `openai` Python SDK at Google's OpenAI-compatible endpoint (`dec-20260320-003`). Provider is swappable by changing `OPENAI_BASE_URL` and `OPENAI_API_KEY` env vars with no orchestrator code changes.
+- Platform scope: single user; multi-user support is explicitly out of scope until a quint decision supersedes `dec-20260320-001`.
+- Initial LLM provider: Gemini 2.5 Flash, accessed via the `openai` Python SDK at Google's OpenAI-compatible endpoint `https://generativelanguage.googleapis.com/v1beta/openai/` (`dec-20260320-003`). Provider is swappable by changing `OPENAI_BASE_URL` and `OPENAI_API_KEY` env vars — zero orchestrator code changes required. The `openai` Python SDK is the only LLM-related production dependency at this layer. Thinking token budget must be set at ≥1,000 tokens or disabled explicitly when latency matters. No custom retry logic in MVP; rely on SDK defaults. Forbidden: hand-rolled HTTP client or manual JSON parsing of LLM responses; synchronous SDK usage inside coroutines; Anthropic SDK anywhere in the runtime path; hardcoded credentials in source.
 - Telegram Bot API integration uses `python-telegram-bot` v22+ as a client/types layer, not as the runtime control plane.
-- Runtime concurrency model: asyncio end-to-end (`dec-20260320-002`). All handlers are `async def` coroutines. Dulwich (sync) is always called via `asyncio.run_in_executor` — never directly from a coroutine. `asyncio.run()` inside a coroutine is forbidden. The DB driver must be async (psycopg3 async or asyncpg).
+- Runtime concurrency model: asyncio end-to-end (`dec-20260320-002`). All handlers are `async def` coroutines. Dulwich (sync) is always called via `asyncio.run_in_executor` — never directly from a coroutine. `asyncio.run()` inside a coroutine is forbidden. The DB driver must be async (psycopg3 async or asyncpg). Forbidden: blocking calls in the event loop without executor delegation; mixing thread-pool dispatch with asyncio handlers; sync HTTP client in the LLM call path.
 - Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
 - MVP web search, when enabled, uses Gemini grounding (Google Search) as a per-turn model capability instead of a provider-agnostic runtime search tool.
 - LinkedIn and Google Calendar remain documented post-MVP seams, not V1 implementation targets.
@@ -710,6 +711,66 @@ Operational notes:
 
 - Gemini grounding is opt-in per turn; it is not active by default on every model call
 - enabling Gemini grounding may incur additional Google API charges; it is not free simply because the base model tier is free
+
+## Testing Strategy
+
+Decision record: `dec-20260320-004` — V3 Layered: typed stub + Pydantic schema contract tier.
+
+### Core Constraints
+
+- No live API calls in the default CI unit run.
+- No shell execution or external services in unit tests.
+- `LLMClient` is always accessed through `LLMClientProtocol` — no code may instantiate the concrete client directly in tests.
+
+### Unit Test Layer
+
+All orchestrator and handler tests inject a `StubLLMClient` via `LLMClientProtocol`:
+
+```python
+# src/llm/protocol.py
+class LLMClientProtocol(Protocol):
+    async def chat(self, request: ChatRequest) -> ChatResponse: ...
+
+# tests/stubs/llm.py
+class StubLLMClient:
+    def __init__(self, responses: list[ChatResponse]) -> None: ...
+    async def chat(self, request: ChatRequest) -> ChatResponse: ...
+```
+
+`StubLLMClient` returns scripted `ChatCompletion` responses with no HTTP. The stub lives in `tests/stubs/llm.py`.
+
+### Pydantic Contract Surface
+
+Pydantic schemas for tool-call request and response payloads are the single source of truth shared by production code, stubs, and the contract tier. Both the `StubLLMClient` and the real `LLMClient` validate against the same models. Schema drift between the stub and the real API is caught when the contract tier runs.
+
+### Contract Test Tier
+
+A separate `tests/contract/` directory (excluded from the default unit run) hits the live Gemini endpoint and asserts that real responses satisfy the same Pydantic schemas:
+
+```python
+@pytest.mark.live
+async def test_chat_response_schema(live_llm_client: LLMClientProtocol) -> None:
+    response = await live_llm_client.chat(minimal_request())
+    ChatResponse.model_validate(response)  # raises on schema violation
+```
+
+Contract tests require `OPENAI_API_KEY` and `OPENAI_BASE_URL` environment variables. They are not free — run them only as a required pre-merge gate, not on every push.
+
+### CI Pipeline Shape
+
+Two test stages:
+
+1. `pytest -m "not live"` — fast unit suite; runs on every push; no network access.
+2. `pytest -m live` — contract suite; required pre-merge check in GitHub Actions; uses `OPENAI_API_KEY` and `OPENAI_BASE_URL` repo secrets.
+
+### Admissibility
+
+- `unittest.mock.patch` directly on OpenAI SDK internals is not permitted.
+- Cassette files (`vcrpy` / `pytest-recording`) must not be committed to the main test suite.
+
+### Rollback
+
+If the contract tier proves too expensive to maintain, remove `tests/contract/` and the `pytest -m live` CI stage. `LLMClientProtocol` and `StubLLMClient` are unchanged — production code requires no modification. The system degrades to V1 (pure fake) without a new decision record.
 
 ## Post-MVP External Integrations
 

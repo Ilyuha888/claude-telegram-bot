@@ -41,7 +41,7 @@ The goal is not to build a magical autonomous agent. The goal is to build a reli
    - recurring jobs
    - user-created jobs with approved `Agent_Obsidian_Vault/` artifact scopes
    - agent-created follow-up jobs that start pending approval and stay within agent-owned write scopes
-6. Optional web search via Z.ai built-in web search in chat.
+6. Optional web search via Gemini grounding (Google Search), enabled per turn by the orchestrator.
 
 ### Out of Scope for V1
 
@@ -61,10 +61,11 @@ The goal is not to build a magical autonomous agent. The goal is to build a reli
 - Knowledge model: separate knowledge-vault Git repository.
 - Safety model: no arbitrary shell access for the runtime LLM.
 - Workspace model: Telegram topics map to long-lived workspaces.
-- LLM provider at project start: Z.ai behind an `LLMClient` interface.
+- LLM provider: Gemini 2.5 Flash via the `openai` Python SDK at Google's OpenAI-compatible endpoint; provider is swappable by env var only (`dec-20260320-003`).
+- Runtime concurrency: asyncio end-to-end; all handlers are `async def` coroutines; Dulwich called via `run_in_executor` only (`dec-20260320-002`).
 - Telegram Bot API integration uses `python-telegram-bot` v22+ as a client/types layer, not as the runtime control plane.
 - Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
-- MVP web search, when enabled, uses Z.ai built-in web search in chat; this may still incur Z.ai tool charges and is not a deterministic runtime tool output.
+- MVP web search, when enabled, uses Gemini grounding (Google Search), activated per turn by the orchestrator; it is not a deterministic runtime tool output.
 - LinkedIn and Google Calendar remain post-MVP integration seams, not V1 implementation targets.
 - Scheduled jobs may auto-persist only to approved `Agent_Obsidian_Vault/` artifact paths; `User_Obsidian_Vault/` changes remain review-gated.
 - Background execution uses Postgres for queue, retry, and durable runtime state.
@@ -142,7 +143,7 @@ At the moment, no MVP-scoped open decisions remain.
 - runtime repository scaffold
 - Docker Compose setup
 - Telegram receive and send flow
-- Z.ai adapter
+- Gemini 2.5 Flash via openai SDK adapter
 - minimal tool loop
 
 ### Phase 1

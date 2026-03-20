@@ -26,3 +26,8 @@ The repository guidance already assumes:
 - The implementation language is fixed for the first scaffold and migration planning.
 - Schema design, tool contracts, and persistence models can assume Python-native typing and validation patterns.
 - Future non-Python components are still possible, but the runtime control plane remains Python-first unless a later ADR changes that.
+
+## Superseding Decisions
+
+- **Concurrency model** (`dec-20260320-002`): asyncio end-to-end. All handlers are `async def` coroutines. Dulwich (sync) is called via `asyncio.run_in_executor` only. `asyncio.run()` inside a coroutine is forbidden. DB driver must be async (psycopg3 async or asyncpg).
+- **LLM provider** (`dec-20260320-003`): Gemini 2.5 Flash via the `openai` Python SDK at Google's OpenAI-compatible endpoint. Provider swappable by env var; `openai` SDK is the only LLM production dependency.
