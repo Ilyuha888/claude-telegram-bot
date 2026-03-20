@@ -46,20 +46,38 @@ This project uses [quint-code](https://github.com/m0n0x41d/quint-code) to track 
 
 Do **not** create a quint artifact for routine implementation details or obvious choices.
 
-### Workflow
+### Decision modes
 
-1. **Frame the problem** — `quint_problem` (or `/q-frame`) to define what must be decided and why.
-2. **Record a solution** — `quint_solution` (or `/q-explore`, `/q-compare`) to document options and trade-offs.
-3. **Finalize the decision** — `quint_decision` (or `/q-decide`) to lock the chosen path with rationale.
+| Mode | Entry point | When |
+|---|---|---|
+| **micro** | `/q-note` | Single obvious choice with clear rationale; no alternatives needed |
+| **quick** | `/q-frame` → `/q-decide` | Bounded choice, alternatives are known, blast radius is low |
+| **full** | `/q-frame` → `/q-explore` → `/q-compare` → `/q-decide` | High blast radius, multiple viable options, hard to reverse |
+| **auto-depth** | `/q-reason` | Default — lets quint pick the appropriate depth based on problem complexity |
 
-For lightweight micro-decisions, use `quint_note` / `/q-note` directly — no full problem/solution cycle needed.
+**Default entry point: `/q-reason`** (auto-depth). Use the explicit modes only when you already know the right depth.
+
+### Key concepts
+
+- **R_eff (weakest link):** a decision is only as strong as its weakest piece of evidence. A high-confidence argument resting on one unverified assumption has low R_eff.
+- **Evidence decay:** evidence has a `valid_until` date. Expired evidence downgrades the artifact's confidence — do not treat old benchmarks as current.
+- **Parity enforcement:** when comparing options, hold all non-decision variables constant. Apples-to-apples only.
+- **Diversity check:** ensure solution variants are meaningfully distinct, not just surface renamings.
+- **Indicator roles:** each dimension is either a *constraint* (hard limit), a *target* (optimize), or an *observation* (watch but do not optimize — anti-Goodhart).
+
+### Lifecycle
+
+- **Problems:** `Backlog → In Progress → Addressed`. Do not close a problem by opening a new one — address it.
+- **Notes:** 90-day auto-expiry. A stale note signals re-examination, not automatic invalidation.
+- **Refresh rule:** after 5+ days away from a decision area, run `/q-refresh` to detect expired validity windows and degraded evidence chains before resuming work.
 
 ### Key tools
 
 | Tool / Skill | When |
 |---|---|
-| `quint_problem` / `/q-frame` | Opening a new decision thread |
-| `quint_solution` / `/q-explore`, `/q-compare` | Documenting options |
+| `/q-reason` | Default: auto-depth reasoning on any decision |
+| `quint_problem` / `/q-frame` | Opening a new decision thread explicitly |
+| `quint_solution` / `/q-explore`, `/q-compare` | Documenting and comparing options |
 | `quint_decision` / `/q-decide` | Locking the final choice |
 | `quint_note` / `/q-note` | Quick micro-decision with rationale |
 | `quint_query` / `/q-search`, `/q-status` | Searching past decisions before starting work |
@@ -69,12 +87,12 @@ For lightweight micro-decisions, use `quint_note` / `/q-note` directly — no fu
 
 ```
 .quint/
-  problems/     # open and closed problem cards
-  solutions/    # solution portfolios per problem
-  decisions/    # finalized decision records
-  notes/        # micro-decisions and observations
-  evidence/     # supporting data linked to decisions
-  refresh/      # lifecycle and staleness reports
+  problems/     # ProblemCards — lifecycle: Backlog → In Progress → Addressed
+  solutions/    # SolutionPortfolios per problem
+  decisions/    # finalized DecisionRecords
+  notes/        # micro-decisions — 90-day auto-expiry
+  evidence/     # EvidencePacks — check valid_until dates before citing
+  refresh/      # RefreshReports — lifecycle and staleness audits
   quint.db      # FTS5 index — do not edit manually
 ```
 
