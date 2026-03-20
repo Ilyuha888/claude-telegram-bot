@@ -527,12 +527,13 @@ Approval modes:
 - scheduled jobs may use approval granted at job creation or update only for direct artifact writes that stay inside declared `Agent_Obsidian_Vault/` prefixes
 - a scheduled run that proposes a `User_Obsidian_Vault/` change must emit a review package and wait for explicit approval before the mutation pipeline continues
 
-Confirmed staging model:
+Confirmed staging model (`dec-20260320-005`):
 
 - the runtime maintains one service-owned vault clone per environment and never writes into the user's live Obsidian clone
-- each review request creates an isolated local staging branch `assistant/staging/<review_request_id>` and a dedicated worktree rooted at a recorded `base_commit`
-- pre-approval file mutations happen only inside that staging worktree
-- every prepared review persists both the filesystem staging metadata and a normalized `change_manifest` so the worktree can be replayed or rebuilt deterministically
+- pre-approval file mutations are not materialized on disk; proposed content is stored as `change_manifest` blobs in Postgres only
+- `base_commit` is recorded at staging time alongside the manifest
+- on approval, the runtime applies the `change_manifest` in-memory via Dulwich's ObjectStore and index API (no working tree checkout), creates the review branch, commits, and pushes
+- no pre-approval worktrees; no filesystem staging state to clean up before approval
 
 Review request contract:
 
@@ -541,8 +542,6 @@ review_request:
   id: "rr_01HV6M8F8MQ8Q0QFQ5Y5B4Y8CN"
   base_branch: "main"
   base_commit: "abc1234"
-  staging_branch: "assistant/staging/rr_01HV6M8F8MQ8Q0QFQ5Y5B4Y8CN"
-  staging_worktree_path: "/srv/personal-assistant/vault/worktrees/rr_01HV6M8F8MQ8Q0QFQ5Y5B4Y8CN"
   change_manifest:
     - op: "update_file"
       path: "User_Obsidian_Vault/Я аналитик/Experience/JoomPulse/01. Before First Day.md"
@@ -557,26 +556,24 @@ review_request:
   approved_at: null
 ```
 
-Lifecycle:
+Lifecycle (`dec-20260320-005`):
 
-1. `git.prepare_review` fetches `origin/<base_branch>`, records `base_commit`, creates the staging branch and worktree, applies the requested mutations, and stores review metadata plus `change_manifest`.
-2. The user reviews the diff and summary from the isolated worktree. No `push`, remote branch, or PR exists before approval.
-3. On approval, the runtime replays the same `change_manifest` on top of the latest `origin/<base_branch>` in a fresh worktree.
+1. `git.prepare_review` fetches `origin/<base_branch>`, records `base_commit`, stores the `change_manifest` and proposed file content blobs in Postgres, and generates a diff summary for the user. No branch, worktree, or remote object is created yet.
+2. The user reviews the diff summary in Telegram and approves or rejects.
+3. On approval, the runtime fetches the latest `origin/<base_branch>` and replays the `change_manifest` in-memory using Dulwich's ObjectStore and index API.
 4. If replay conflicts or changes the reviewed diff, the review request becomes `conflicted` and must be regenerated instead of silently rebased.
-5. If replay is clean, the runtime commits the changes, pushes the final review branch, and creates the PR.
+5. If replay is clean, the runtime creates the review branch, commits, pushes, and creates the PR via the forge HTTP adapter.
 
 State machine:
 
 ```text
-drafting
+pending
   -> awaiting_approval
-  -> approved_pending_replay
-  -> commit_created
-  -> branch_pushed
-  -> pr_created
+  -> committing
+  -> done
 ```
 
-Recoverable and terminal side states:
+Side states:
 
 - `failed_recoverable` for retryable infrastructure failures such as `commit ok -> push failed`
 - `conflicted` when replay on the latest base is not clean or changes the reviewed diff
@@ -585,9 +582,9 @@ Recoverable and terminal side states:
 
 Recovery rules:
 
-- if `commit_sha` exists and `push` fails, retry only the push step
-- if the remote branch already exists and PR creation fails, retry only PR creation against the recorded `branch_name`
-- if the staging worktree is lost or stale, rebuild it from `change_manifest` plus `base_commit` rather than treating the filesystem as the only source of truth
+- if `commit_sha` exists and push fails, retry only the push step
+- if the remote branch exists and PR creation fails, retry only PR creation against the recorded `branch_name`
+- the `change_manifest` in Postgres is always the source of truth; there is no filesystem staging state to rebuild
 
 Branch naming and cleanup:
 

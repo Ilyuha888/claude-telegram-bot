@@ -83,6 +83,16 @@ Do **not** create a quint artifact for routine implementation details or obvious
 | `quint_query` / `/q-search`, `/q-status` | Searching past decisions before starting work |
 | `quint_refresh` / `/q-refresh` | Detecting stale or superseded decisions |
 
+### Lifecycle management rule
+
+**Never manually edit `.quint/` files to close or transition artifacts.** Use MCP tools:
+
+- Problem resolved by a decision → `quint_refresh(action="supersede", artifact_ref="prob-...", new_artifact_ref="dec-...")`
+- Decision no longer relevant → `quint_refresh(action="deprecate", artifact_ref="dec-...")`
+- Validity window needs extending → `quint_refresh(action="waive", artifact_ref="...", new_valid_until="...")`
+
+Manual file edits to `.quint/` are only acceptable when the MCP schema has no action covering the change (e.g. updating a problem's signal text when the problem stays open).
+
 ### `.quint/` structure
 
 ```

@@ -1,7 +1,8 @@
 # ADR-006 Git Approval Flow
 
-- Status: Accepted
+- Status: Superseded by `dec-20260320-005`
 - Date: 2026-03-10
+- Superseded: 2026-03-20
 
 ## Context
 
