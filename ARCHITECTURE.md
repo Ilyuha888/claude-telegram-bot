@@ -22,7 +22,7 @@ This document is the technical source of truth for the assistant runtime. It des
 - Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
 - MVP web search, when enabled, uses Gemini grounding (Google Search) as a per-turn model capability instead of a provider-agnostic runtime search tool.
 - LinkedIn and Google Calendar remain documented post-MVP seams, not V1 implementation targets.
-- Vault mutation review flow uses a service-owned vault clone with isolated per-review worktrees.
+- Vault mutation review flow uses manifest-only staging in Postgres; no pre-approval worktrees (`dec-20260320-005`).
 - Review branches are created per approved `ReviewRequest`, not per workspace.
 - `SessionState` is versioned and typed; `pending_tasks`, `open_loops`, and `decisions` are structured collections.
 
@@ -238,7 +238,7 @@ Core entities:
 
 Implementation boundary:
 
-- `Dulwich` handles repository operations inside the service-owned vault clone and review worktrees
+- `Dulwich` handles repository operations in-memory via ObjectStore and index API; no working tree checkout required (`dec-20260320-005`)
 - PR creation stays behind a separate forge-specific HTTP adapter and is not delegated to the Git library
 
 ### Scheduler Context

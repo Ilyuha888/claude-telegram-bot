@@ -16,7 +16,7 @@ The remaining MVP provider questions were tightly coupled to architecture bounda
 
 1. The Telegram gateway uses `python-telegram-bot` v22+ as a client/types layer for Telegram Bot API transport and typed update objects.
 2. The runtime does not adopt `python-telegram-bot` dispatcher, routing, or job-queue abstractions as the control plane. Webhook routing, orchestration, retries, and scheduling stay in the application.
-3. Git repository operations use `Dulwich` inside the service-owned vault clone and review worktrees.
+3. Git repository operations use `Dulwich` in-memory via ObjectStore; no working tree checkout required (`dec-20260320-005`).
 4. PR creation stays behind a separate forge-specific HTTP adapter. The Git library choice does not imply a forge API choice.
 5. MVP web search uses Gemini grounding (Google Search) as an explicitly enabled per-turn model capability (`dec-20260320-003`).
 6. MVP does not expose a provider-agnostic `web.search` runtime tool. Search is a model-native capability, not a deterministic tool output.
