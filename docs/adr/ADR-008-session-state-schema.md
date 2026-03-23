@@ -1,7 +1,8 @@
 # ADR-008 Session State Schema
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-03-10
+- Superseded by: dec-20260323-001
 
 ## Context
 

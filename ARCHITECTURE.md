@@ -24,7 +24,7 @@ This document is the technical source of truth for the assistant runtime. It des
 - LinkedIn and Google Calendar remain documented post-MVP seams, not V1 implementation targets.
 - Vault mutation review flow uses manifest-only staging in Postgres; no pre-approval worktrees (`dec-20260320-005`).
 - Review branches are created per approved `ReviewRequest`, not per workspace.
-- `SessionState` is versioned and typed; `pending_tasks`, `open_loops`, and `decisions` are structured collections.
+- `SessionState` is versioned and typed; `pending_tasks`, `open_loops`, and `workspace_rulings` are structured collections. `active_facts` is deferred until prototype validation (`dec-20260323-001`). New session fields must have typed Pydantic contracts before entering the normative schema.
 
 ## System Model
 
@@ -303,8 +303,6 @@ session_state:
       - "git.review"
       - "schedule.create"
   rolling_summary: "..."
-  active_facts:
-    - "User is exploring DS and LLM roles"
   pending_tasks:
     - id: "task-01"
       title: "Prepare a review summary before the PR"
@@ -323,8 +321,8 @@ session_state:
       opened_at: "2026-03-10T12:00:00Z"
       related_task_ids:
         - "task-01"
-  decisions:
-    - id: "decision-01"
+  workspace_rulings:
+    - id: "ruling-01"
       topic: "review-flow"
       summary: "Create one review branch per approved review request"
       decided_by: user
@@ -341,8 +339,9 @@ Normative collection rules:
 - `pending_tasks` contains only unresolved actionable items with `status in {pending, in_progress, blocked}`.
 - terminal tasks such as `done`, `cancelled`, or `dropped` must leave `session_state` and remain only in audit history or summaries.
 - `open_loops` contains only unresolved follow-ups with `kind in {user_answer, approval, conflict, external_event}`.
-- `decisions` contains only active finalized decisions that still affect behavior; superseded or historical decisions must leave `session_state` and remain only in durable history.
-- free-form string-only variants of `pending_tasks`, `open_loops`, and `decisions` are invalid.
+- `workspace_rulings` contains only active finalized workspace-scoped rulings that still affect behavior; superseded or historical rulings must leave `session_state` and remain only in durable history.
+- free-form string-only variants of `pending_tasks`, `open_loops`, and `workspace_rulings` are invalid.
+- new session fields must have a typed Pydantic contract before entering this normative schema; bare `list[str]` collections are never valid for structured session data.
 
 ### Compaction Strategy
 
@@ -357,9 +356,9 @@ Compaction rules:
 
 1. Keep the most recent turns as raw history.
 2. Compress older history into `rolling_summary`.
-3. Extract durable context into `active_facts`, `pending_tasks`, `open_loops`, and `decisions`.
+3. Extract durable context into `pending_tasks`, `open_loops`, and `workspace_rulings`.
 4. Store summaries in Postgres and promote important outcomes into the vault when appropriate.
-5. Drop terminal tasks and superseded decisions from the compacted `session_state`.
+5. Drop terminal tasks and superseded rulings from the compacted `session_state`.
 
 ## Tool Runtime Design
 
