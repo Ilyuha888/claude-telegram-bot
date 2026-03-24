@@ -83,6 +83,23 @@ flowchart TD
 - validates tool calls and handles the tool loop
 - renders the final assistant response
 
+#### Structured Output Policy (`dec-20260324-001`)
+
+Two output mechanisms — never mixed within a single call:
+
+1. **Tool calls** — all agent actions (vault writes, scheduler, git ops). Uses the openai SDK tool-call mechanism. No `response_format`.
+2. **Selective SGR** — non-tool structured outputs: intent resolution, session compaction, review generation. Uses `response_format={"type": "json_schema", ...}` with a Pydantic-derived schema.
+
+SGR schema rules:
+- `reasoning: str` must be the **first field** — the model commits its logic before the decision fields.
+- Schemas are derived from Pydantic models only — no hand-rolled JSON schema dicts.
+- SGR is added to a call type only when auditability or output consistency is a documented need.
+
+Admissibility:
+- `response_format` is never used for tool-call outputs.
+- `reasoning` is free-form prose — do not add length constraints or sub-schema structure to it.
+- Provider swap (env-var only) must require zero schema changes.
+
 ### Tool Runtime
 
 - executes typed tools only
