@@ -26,16 +26,16 @@ The agent must not:
 ## Global Working Agreements
 
 1. Read `README.md` and `ARCHITECTURE.md` first.
-2. Do not change architecture invariants without first recording a `quint_decision` artifact (or receiving explicit user instruction).
+2. Do not change architecture invariants without first recording a `haft_decision` artifact (or receiving explicit user instruction).
 3. Prefer simple deterministic services over framework-heavy abstractions.
 4. Do not add new production dependencies without a short justification.
 5. Keep the runtime repository and the knowledge repository conceptually separate.
 6. Present risky changes as proposals before implementation.
 7. For larger tasks, outline the planned file changes before editing.
 
-## Decision Records with Quint
+## Decision Records with Haft
 
-This project uses [quint-code](https://github.com/m0n0x41d/quint-code) to track engineering decisions as structured artifacts in `.quint/`. Use it whenever a choice has lasting architectural consequences or is not obvious from the code.
+This project uses [haft](https://github.com/m0n0x41d/haft) to track engineering decisions as structured artifacts in `.haft/`. Use it whenever a choice has lasting architectural consequences or is not obvious from the code.
 
 ### When to use it
 
@@ -44,25 +44,25 @@ This project uses [quint-code](https://github.com/m0n0x41d/quint-code) to track 
 - You need to record why an alternative was rejected
 - A future agent would otherwise have to re-derive the reasoning
 
-Do **not** create a quint artifact for routine implementation details or obvious choices.
+Do **not** create a haft artifact for routine implementation details or obvious choices.
 
-**Default entry point: `/q-reason`** — auto-depth, picks the right mode for the problem. See the `/q-reason` skill for full workflow guidance.
+**Default entry point: `/h-reason`** — auto-depth, picks the right mode for the problem. See the `/h-reason` skill for full workflow guidance.
 
 ### Lifecycle management rule
 
-**Never manually edit `.quint/` files to close or transition artifacts.** Use MCP tools:
+**Never manually edit `.haft/` files to close or transition artifacts.** Use MCP tools:
 
-- Problem resolved by a decision → `quint_refresh(action="supersede", artifact_ref="prob-...", new_artifact_ref="dec-...")`
-- Decision no longer relevant → `quint_refresh(action="deprecate", artifact_ref="dec-...")`
-- Validity window needs extending → `quint_refresh(action="waive", artifact_ref="...", new_valid_until="...")`
+- Problem resolved by a decision → `haft_refresh(action="supersede", artifact_ref="prob-...", new_artifact_ref="dec-...")`
+- Decision no longer relevant → `haft_refresh(action="deprecate", artifact_ref="dec-...")`
+- Validity window needs extending → `haft_refresh(action="waive", artifact_ref="...", new_valid_until="...")`
 
 ### Relationship to `docs/adr/`
 
-`docs/adr/` holds legacy ADRs written before quint was introduced. New decisions go into `.quint/` via the MCP tools. Do not create new files under `docs/adr/` manually.
+`docs/adr/` holds legacy ADRs written before haft was introduced. New decisions go into `.haft/` via the MCP tools. Do not create new files under `docs/adr/` manually.
 
 ### Before starting significant work
 
-Run `/q-status` to surface active decisions and stale artifacts. Do not re-litigate closed decisions without first checking whether they still apply.
+Run `/h-status` to surface active decisions and stale artifacts. Do not re-litigate closed decisions without first checking whether they still apply.
 
 ## Architecture Invariants
 
@@ -74,7 +74,7 @@ These rules are mandatory:
 - the knowledge vault is a separate Git repository
 - a Telegram topic is a workspace namespace, not just a chat thread
 - the source of truth for long-term knowledge is the vault plus Git history, not a transcript database
-- the platform is scoped to a single user; multi-user support is explicitly out of scope until a quint decision supersedes `dec-20260320-001`
+- the platform is scoped to a single user; multi-user support is explicitly out of scope until a haft decision supersedes `dec-20260320-001`
 
 ## Repository Expectations
 

@@ -1,12 +1,12 @@
 {
   "mcpServers": {
-    "quint-code": {
-      "command": "/Users/nartov/.local/bin/quint-code",
+    "haft": {
+      "command": "/Users/nartov/.local/bin/haft",
       "args": [
         "serve"
       ],
       "env": {
-        "QUINT_PROJECT_ROOT": "/Users/nartov/yet_another_personal_assistant"
+        "HAFT_PROJECT_ROOT": "/Users/nartov/yet_another_personal_assistant"
       }
     }
   }
