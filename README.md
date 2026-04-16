@@ -1,174 +1,72 @@
-# Personal Assistant Platform
+# yet-another-personal-assistant
 
-Self-hosted personal assistant platform with Telegram as the primary interface, an Obsidian-backed knowledge vault, a Git approval flow for knowledge changes, scheduled jobs, and extensible tool integrations.
+Self-hosted personal assistant running Claude Code on a Hetzner VM, with Telegram as the primary interface and an Obsidian vault as the long-term knowledge store.
 
-## Product Vision
+> **Note:** This repository was originally the "muscat" custom Python orchestrator. That design was abandoned on 2026-04-14 in favor of Claude Code on VM (`dec-20260414-001`). The live system description is in `ARCHITECTURE.md`. Legacy design artifacts are in `docs/` and `.haft/` (marked superseded).
 
-The goal is not to build a magical autonomous agent. The goal is to build a reliable personal assistant platform with clear control boundaries:
+## Current State
 
-- Telegram is the primary UX channel.
-- The Obsidian knowledge vault is the main long-term knowledge system.
-- Git is the source of truth for knowledge changes.
-- The LLM orchestrates approved tools but does not get arbitrary shell access.
-- Scheduled work runs through a separate job execution path.
-- External integrations can be added later behind typed adapters.
+**Operational since 2026-04-14.** The assistant runs as a persistent Claude Code session on a Hetzner VM, accessible via:
 
-## V1 Scope
+- **Primary:** Telegram bot `@ianartov_personal_assistant_bot` (official channel plugin)
+- **Secondary:** Remote Control via `claude.ai/code` (session name: KB-Assistant)
+- **Admin:** SSH `root@46.225.212.69`
 
-### In Scope
+**What it can do today:**
+- Answer questions, do research, reason about problems via Telegram
+- Read, search, create, and edit notes in the Obsidian knowledge vault
+- Commit vault changes with a confirm flow (write → ask → commit → push)
+- Run scheduled vault maintenance via Claude Code's built-in tools
+- Access MCP tools: haft, context7, mgrep, hookify, and others
 
-1. Telegram interaction:
-   - text messages
-   - links
-   - images
-2. Knowledge vault operations:
-   - read Markdown notes
-   - search the vault
-   - create/move/delete Markdown notes (accepts `target_root`)
-   - create/move/delete directories (accepts `target_root`)
-   - attach images to notes (accepts `target_root`)
-3. Git-backed change management for the knowledge vault:
-   - isolated working branch
-   - change summary and diff overview
-   - explicit user approval
-   - commit and pull request to the private knowledge repository
-4. Session handling:
-   - normal chat flow
-   - topic-based workspaces
-   - switching between active contexts
-5. Scheduling:
-   - reminders
-   - recurring jobs
-   - user-created jobs with approved `Agent_Obsidian_Vault/` artifact scopes
-   - agent-created follow-up jobs that start pending approval and stay within agent-owned write scopes
-6. Optional web search via Gemini grounding (Google Search), enabled per turn by the orchestrator.
+## Architecture
 
-### Out of Scope for V1
+See `ARCHITECTURE.md` for the full system description. In brief:
 
-- permanently running autonomous coding agents
-- full voice UX
-- multi-user support
-- arbitrary script execution from the runtime LLM
-- LinkedIn and Google Calendar integrations beyond documented post-MVP seams
-- visibility into local vault edits before they are pushed to Git
-- external secret manager integration
+```
+Telegram ──► Claude Code (VM) ──► Obsidian vault (Git repo)
+Browser  ──► (Remote Control)
+SSH      ──► (admin/emergency)
+```
 
-## Confirmed Decisions
+Claude Code runs in tmux under systemd on a Hetzner CPX22 VM. The Obsidian vault is a separate Git repo; changes go through a commit-confirm flow and auto-push.
 
-- Runtime architecture: custom orchestrator with a deterministic tool runtime.
-- Backend language: Python 3.12+.
-- Runtime metadata store: Postgres.
-- Knowledge model: separate knowledge-vault Git repository.
-- Safety model: no arbitrary shell access for the runtime LLM.
-- Workspace model: Telegram topics map to long-lived workspaces.
-- LLM provider: Gemini 2.5 Flash via the `openai` Python SDK at Google's OpenAI-compatible endpoint; provider is swappable by env var only (`dec-20260320-003`).
-- Runtime concurrency: asyncio end-to-end; all handlers are `async def` coroutines; Dulwich called via `run_in_executor` only (`dec-20260320-002`).
-- Telegram Bot API integration uses `python-telegram-bot` v22+ as a client/types layer, not as the runtime control plane.
-- Git repository operations use `Dulwich`; PR creation stays behind a separate forge HTTP adapter.
-- MVP web search, when enabled, uses Gemini grounding (Google Search), activated per turn by the orchestrator; it is not a deterministic runtime tool output.
-- LinkedIn and Google Calendar remain post-MVP integration seams, not V1 implementation targets.
-- Scheduled jobs may auto-persist only to approved `Agent_Obsidian_Vault/` artifact paths; `User_Obsidian_Vault/` changes remain review-gated.
-- Background execution uses Postgres for queue, retry, and durable runtime state.
-- Vault freshness uses Git remote as the only runtime sync boundary; unsynced local Obsidian edits are out of scope for MVP visibility.
-- Deployment beyond local development targets a single VPS with host-managed secrets outside the repository; MVP does not require an external secret manager.
+## Decision Tracking
 
-## High-Level Architecture
+Engineering decisions with lasting consequences are tracked as structured artifacts in `.haft/` using [haft](https://github.com/m0n0x41d/haft).
 
-The runtime is application-first rather than agent-framework-first:
+- **Active decisions:** `dec-20260414-001` (runtime choice), `dec-20260320-001` (single-user scope)
+- **Active problems:** see `ARCHITECTURE.md` — Known Limitations section
+- **Workflow rules:** see `AGENTS.md` — Decision Records with Haft
 
-1. A Telegram gateway receives inbound updates.
-2. A session manager resolves the active workspace and session.
-3. An orchestrator builds context, invokes the LLM, and executes typed tool calls.
-4. Tools operate behind policy checks and produce auditable side effects.
-5. Persistence is split between:
-   - Postgres for runtime metadata, sessions, jobs, and audit records
-   - the knowledge-vault Git repository for long-term user notes, colocated attachments, and assistant-managed artifacts
+Never manually edit `.haft/` files — use MCP tools (`haft_refresh`, `haft_problem`, `haft_decision`).
 
-Core subsystems:
+## Repository Contents
 
-- Telegram gateway
-- session manager
-- agent orchestrator
-- tool runtime
-- policy layer
-- Postgres-backed persistence layer
-- scheduler and worker
+This repository holds engineering governance artifacts, not runtime code:
 
-Detailed technical design lives in [ARCHITECTURE.md](ARCHITECTURE.md). Agent-specific operating rules live in [AGENTS.md](AGENTS.md).
+```
+.haft/           — Engineering decisions (haft artifacts, SQLite DB)
+docs/adr/        — Legacy ADRs from the muscat era (historical, not authoritative)
+docs/            — Legacy muscat design docs (historical, not authoritative)
+ARCHITECTURE.md  — Live system architecture
+AGENTS.md        — Instructions for coding agents and invariant rules
+README.md        — This file
+```
 
-## Implementation Specs
+The runtime lives on the VM. The vault lives in a separate Git repo (`my_obsidian_knowledge_base`).
 
-Implementation-ready contracts for the first scaffold live in:
+## Known Limitations
 
-- [TOOL_CONTRACTS.md](docs/TOOL_CONTRACTS.md) for runtime tool payloads, policy checks, and audit fields
-- [DATA_MODEL.md](docs/DATA_MODEL.md) for Postgres entities, state transitions, and retention semantics
-- [API_SURFACES.md](docs/API_SURFACES.md) for HTTP and Telegram transport boundaries
-- [DEVELOPMENT.md](docs/DEVELOPMENT.md) for local bootstrap expectations and MVP smoke-test criteria
+See the active problem cards in `.haft/`:
 
-## Knowledge Repository Layout
+- `prob-20260416-001` — No multi-session/multi-repo support from Telegram
+- `prob-20260416-002` — Vault CLAUDE.md needs revision after real-world use
+- `prob-20260416-003` — Bot message formatting and Telegram UX quality of life
+- `prob-20260416-004` — Telegram bridge architecture: official plugin vs community bot
+- `prob-20260416-005` — VM security hardening (root user, no network controls)
+- `prob-20260406-001` — No knowledge lifecycle model
 
-Current structure for the knowledge repository:
+## Working with This Repo
 
-- `User_Obsidian_Vault/` for user-owned notes
-  - hub notes and folders coexist at the top level
-  - a note may have a same-named directory for deeper material, for example `Я аналитик.md` with `Я аналитик/`, or `Я студент.md` with `Я студент/`
-  - attachments usually live next to the related notes in sibling `files/` directories
-- `Agent_Obsidian_Vault/` for assistant-managed artifacts
-  - machine-readable zones may live under direct subdirectories such as `profile/`, `rules/`, `tasks/`, `indexes/`, `drafts/`, and `reviews/`
-
-These are working patterns rather than rigid taxonomy contracts. The user vault is intentionally heterogeneous.
-
-## MVP Definition of Done
-
-The MVP is done when the assistant can:
-
-1. receive text, links, and images from Telegram
-2. create or update Obsidian notes
-3. attach an image to a note
-4. find related notes and answer using vault context
-5. show a review summary before a commit
-6. create a branch, commit, and pull request after approval
-7. create reminders or recurring jobs
-8. operate across multiple topic-based workspaces without mixing context
-
-## Open Decisions and TBDs
-
-The canonical open-decision list lives in [ARCHITECTURE.md](ARCHITECTURE.md#tbd--open-decisions).
-At the moment, no MVP-scoped open decisions remain.
-
-## Roadmap
-
-### Phase 0
-
-- runtime repository scaffold
-- Docker Compose setup
-- Telegram receive and send flow
-- Gemini 2.5 Flash via openai SDK adapter
-- minimal tool loop
-
-### Phase 1
-
-- Obsidian read, write, and search
-- Git approval flow
-- sessions and summaries
-- reminders and recurring jobs
-- image attachment flow
-
-### Phase 2
-
-- Telegram topics as workspaces
-- per-workspace profiles
-- workspace summaries
-- bootstrap commands for new workspaces
-
-### Phase 3
-
-- vault indexing
-- note linking suggestions
-- duplicate detection
-- inbox-to-structured-note workflows
-
-### Phase 4
-
-- external integrations behind adapters
-- broader automation capabilities after MVP runtime flows are stable
+Before starting significant work, run `/h-status` to surface active decisions and open problems. Read `AGENTS.md` for invariant rules and coding agent instructions.

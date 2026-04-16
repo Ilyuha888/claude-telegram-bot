@@ -4,17 +4,18 @@ Instructions for local coding agents working with this repository and the knowle
 
 ## Mission
 
-This repository contains a personal assistant platform with:
+This repository contains engineering governance artifacts for a personal assistant platform powered by Claude Code on a Hetzner VM, with:
 
-- Telegram UX
-- an Obsidian-backed knowledge vault
+- Telegram as the primary UX channel (official channel plugin)
+- an Obsidian-backed knowledge vault (separate Git repo)
 - a Git approval flow for knowledge changes
+- haft decision tracking in `.haft/`
 
 The agent should help with:
 
-- understanding the repository structure
-- implementing code within the architectural constraints
-- indexing the vault
+- understanding the repository structure and live system architecture
+- working within the architectural invariants and active haft decisions
+- indexing and improving the vault
 - proposing improvements without violating safety boundaries
 
 The agent must not:
@@ -68,24 +69,21 @@ Run `/h-status` to surface active decisions and stale artifacts. Do not re-litig
 
 These rules are mandatory:
 
-- the runtime is a custom orchestrator, not a research-agent framework
-- the runtime LLM does not get arbitrary shell access
-- filesystem writes go only through policy-controlled tools or services
-- the knowledge vault is a separate Git repository
-- a Telegram topic is a workspace namespace, not just a chat thread
-- the source of truth for long-term knowledge is the vault plus Git history, not a transcript database
+- the runtime is Claude Code on a Hetzner VM, not a custom-built orchestrator
+- the runtime LLM does not get arbitrary shell access — shell commands go through the allowlist
+- filesystem writes go only through policy-controlled tools or user-confirmed approval
+- the knowledge vault is a separate Git repository; Claude Code does not own it
+- the source of truth for long-term knowledge is the vault plus Git history, not conversation transcripts
 - the platform is scoped to a single user; multi-user support is explicitly out of scope until a haft decision supersedes `dec-20260320-001`
 
 ## Repository Expectations
 
-When writing code:
+This repository holds governance artifacts, not runtime code. When working here:
 
-- target Python 3.12+
-- use explicit typing
-- prefer Pydantic schemas for typed boundaries
-- keep handlers thin and domain services explicit
-- place external integrations behind adapter interfaces
-- keep tool contracts typed and auditable
+- prefer editing existing docs over creating new files
+- new engineering decisions go into `.haft/` via MCP tools, not `docs/adr/`
+- if proposing VM or vault changes, describe the change and its blast radius before acting
+- do not create Python source files — there is no custom runtime code in this repository
 
 ## Safety Rules for Coding Agents
 
@@ -98,7 +96,7 @@ Do not do the following without direct user approval:
 - store secrets in the repository
 - disable review-before-commit safeguards
 
-If you think one of these is necessary, explain the trade-off first and propose an ADR.
+If you think one of these is necessary, explain the trade-off first and record a haft decision artifact via `/h-reason`.
 
 ## How to Scan the Obsidian Vault
 
