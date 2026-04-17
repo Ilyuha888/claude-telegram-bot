@@ -1,6 +1,6 @@
 # Architecture
 
-> **This document describes the live system as of 2026-04-16.** The previous version described the "muscat" custom Python orchestrator that was abandoned. Legacy design artifacts are preserved in `docs/adr/` and `docs/*.md` but are not authoritative.
+> **This document describes the live system as of 2026-04-17.** The previous version described the "muscat" custom Python orchestrator that was abandoned. Legacy design artifacts are preserved in `docs/adr/` and `docs/*.md` but are not authoritative.
 
 ## Purpose
 
@@ -11,7 +11,7 @@ Self-hosted personal assistant: Telegram as the primary interface, an Obsidian-b
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                  Hetzner CPX22 VM                        │
-│          Ubuntu 24.04 · root@46.225.212.69               │
+│     Ubuntu 24.04 · root@46.225.212.69 (SSH only)         │
 │                                                          │
 │  ┌────────────────────────────────────┐                  │
 │  │  claude-telegram-bot.service       │                  │
@@ -25,7 +25,7 @@ Self-hosted personal assistant: Telegram as the primary interface, an Obsidian-b
 │                  │ spawns Claude Code subprocess          │
 │  ┌───────────────▼────────────────────┐                  │
 │  │  claude-assistant.service          │                  │
-│  │  Claude Code v2.1.110 (tmux)       │                  │
+│  │  Claude Code v2.1.112 (tmux)       │                  │
 │  │  MCP: haft · context7 · hookify ·  │                  │
 │  │       mgrep · skill-creator ·      │                  │
 │  │       frontend-design              │                  │
@@ -63,10 +63,14 @@ Self-hosted personal assistant: Telegram as the primary interface, an Obsidian-b
 
 ## Permission Model
 
-Claude Code runs with `--permission-mode default` and an allowlist policy configured in `/root/.claude/settings.local.json`. This means:
+Claude Code runs as dedicated user `assistant` (non-root, uid=1000) with `--permission-mode default` and an allowlist policy in `/home/assistant/.claude/settings.local.json`. This means:
 - File reads and vault operations proceed without prompts
 - Shell commands and destructive operations require approval
-- Telegram permission prompts do not appear — handled by the allowlist
+- `settings.local.json` is `chmod 600 assistant` — unreadable by other processes (closes the prompt-injection exfiltration gap)
+- `disallowedTools: [WebFetch, WebSearch]` in settings.local.json (applies to admin session; bot sessions use SDK hooks)
+- `/home/assistant/.claudeignore` prevents scan-based credential inclusion in context
+
+Root access retained via SSH only — emergency fallback.
 
 The commit-confirm flow is enforced at the vault level: Claude writes → asks user to confirm → commits only after yes.
 
@@ -89,7 +93,7 @@ The vault is a **separate Git repository** at `~/repos/my_obsidian_knowledge_bas
 | MCP servers | External tool integrations | `~/.claude/settings.local.json` |
 | Skills | Reusable prompt workflows | `~/.claude/skills/` |
 | Hooks | Lifecycle events (pre/post tool) | `~/.claude/settings.local.json` (hooks array) |
-| `.claudeignore` | Exclude paths from context | Not yet configured — see `prob-20260416-005` |
+| `.claudeignore` | Exclude paths from context | `/root/.claudeignore` — deployed (see `dec-20260416-001`) |
 
 **Active MCP servers:** haft (decision tracking), context7 (library docs), hookify (hook rules), mgrep (semantic search), skill-creator, frontend-design, pyright-lsp
 
@@ -100,6 +104,7 @@ The vault is a **separate Git repository** at `~/repos/my_obsidian_knowledge_bas
 | Decision | Summary | Valid Until |
 |---|---|---|
 | `dec-20260414-001` | Claude Code on VM as the personal assistant runtime | 2027-04-14 |
+| `dec-20260416-001` | VM security hardening: layered rollout (Phase A deployed) | 2027-04-16 |
 | `dec-20260416-003` | linuz90/claude-telegram-bot as Telegram bridge | 2026-10-16 |
 | `dec-20260320-001` | Single-user scope — explicit platform constraint | 2027-03-20 |
 
@@ -110,7 +115,7 @@ See `.haft/` for the full decision history including superseded and deprecated a
 | Problem | ID | Depth |
 |---|---|---|
 | Vault CLAUDE.md needs revision after real-world use | `prob-20260416-002` | tactical |
-| VM security hardening: root user, no network controls | `prob-20260416-005` | tactical |
+| VM security hardening: Phase B pending (non-root user) | `prob-20260416-005` → `dec-20260416-001` | tactical |
 | No knowledge lifecycle model | `prob-20260406-001` | standard |
 
 Problems superseded by `dec-20260416-003`: prob-20260416-001 (multi-session), prob-20260416-003 (formatting/UX), prob-20260416-004 (bridge architecture).
@@ -132,7 +137,7 @@ These rules hold regardless of implementation:
 - **Spec:** CPX22 — 2 vCPU / 4 GB RAM / 80 GB SSD
 - **OS:** Ubuntu 24.04
 - **Cost:** ~$10.09/mo
-- **Runtime:** Claude Code v2.1.110, Node.js 22, Bun 1.3.12
+- **Runtime:** Claude Code v2.1.112, Node.js 22, Bun 1.3.12
 - **Process:** systemd `claude-assistant` service (tmux session `assistant`) + `claude-telegram-bot` service
 - **Auth:** Claude Pro/Max subscription via `claude login` (CLI auth)
 
