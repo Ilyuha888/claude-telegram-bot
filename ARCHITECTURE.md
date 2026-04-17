@@ -63,12 +63,19 @@ Self-hosted personal assistant: Telegram as the primary interface, an Obsidian-b
 
 ## Permission Model
 
-Claude Code runs as dedicated user `assistant` (non-root, uid=1000) with `--permission-mode default` and an allowlist policy in `/home/assistant/.claude/settings.local.json`. This means:
-- File reads and vault operations proceed without prompts
-- Shell commands and destructive operations require approval
-- `settings.local.json` is `chmod 600 assistant` — unreadable by other processes (closes the prompt-injection exfiltration gap)
-- `disallowedTools: [WebFetch, WebSearch]` in settings.local.json (applies to admin session; bot sessions use SDK hooks)
+Claude Code runs as dedicated user `assistant` (non-root, uid=1000). Two separate permission surfaces exist:
+
+**Admin session** (tmux `assistant`): `--permission-mode default`, governed by the allowlist in `settings.json` + `settings.local.json`. Interactive prompts appear in the terminal.
+
+**Bot subprocess** (linuz90 SDK): `permissionMode: "default"` + `settingSources: ["user", "local", "project"]`. Permission prompts are routed to Telegram via the `canUseTool` callback — Claude Code asks, the bot sends Allow/Deny inline keyboard buttons, streaming resumes after the user taps. The confirmation message carries the tool description forward (e.g. `✅ Allowed · ▶️ Stage all changes and check status`) so context isn't lost when scrolling. Pre-approved operations (file writes, git ops, vault Bash commands) auto-proceed via the `settings.json` allowlist without prompting.
+
+The same `canUseTool` bridge intercepts Claude Code's built-in `AskUserQuestion` tool: option arrays are rendered as Telegram inline keyboards (callback prefix `askq:`), the user's tap resolves via a deny-with-message pattern that feeds the selected label back as Claude's answer, and streaming continues. Without this intercept the headless SDK subprocess has no channel for AskUserQuestion and silently no-ops.
+
+Additional controls:
+- `settings.local.json` is `chmod 600 assistant` — unreadable by other processes
+- `disallowedTools: [WebFetch, WebSearch]` in `settings.local.json`
 - `/home/assistant/.claudeignore` prevents scan-based credential inclusion in context
+- Bot application layer: `isPathAllowed()` + `checkCommandSafety()` as secondary guards
 
 Root access retained via SSH only — emergency fallback.
 
