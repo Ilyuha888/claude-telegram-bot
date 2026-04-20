@@ -48,7 +48,7 @@ import type {
 
 // Allowlist for auto-approved non-destructive tools (dec-20260420-003)
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const BASH_AUTO_RE = /^\s*(mv|mkdir|cp|find|touch)\s/;
+const BASH_AUTO_RE = /^\s*(mv|mkdir|cp|find|touch|git\s+mv)\s/;
 const BASH_DENY_RE = /\b(rm|git\s+push|git\s+commit|git\s+reset|git\s+rebase|sudo)\b/i;
 
 function extractPath(input: Record<string, unknown>): string | null {
@@ -129,6 +129,7 @@ class ClaudeSession {
   lastMessage: string | null = null;
   conversationTitle: string | null = null;
   private _pendingAutoResumeNotice: string | null = null;
+  private _justCleared = false;
 
   private abortController: AbortController | null = null;
   private isQueryRunning = false;
@@ -213,6 +214,7 @@ class ClaudeSession {
    */
   tryAutoResume(): void {
     if (this.sessionId !== null) return;
+    if (this._justCleared) { this._justCleared = false; return; }
 
     const sessions = this.getSessionList(); // already filters by WORKING_DIR
     if (sessions.length === 0) return;
@@ -640,6 +642,7 @@ class ClaudeSession {
     this.sessionId = null;
     this.lastActivity = null;
     this.conversationTitle = null;
+    this._justCleared = true;
     console.log("Session cleared");
   }
 
