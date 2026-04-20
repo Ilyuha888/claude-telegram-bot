@@ -46,10 +46,9 @@ import type {
   TokenUsage,
 } from "./types";
 
-// Allowlist for auto-approved non-destructive tools (dec-20260420-003)
+// Deny list for Bash: git remote/history ops + sudo. Local filesystem is git-recoverable.
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const BASH_AUTO_RE = /^\s*(mv|mkdir|cp|find|touch|git\s+mv|python3|sed|bash\s+\/tmp\/|cat\s*>\s*\/tmp\/)\s?/;
-const BASH_DENY_RE = /\b(rm|git\s+push|git\s+commit|git\s+reset|git\s+rebase|sudo)\b/i;
+const BASH_DENY_RE = /\b(sudo|git\s+(push|commit|reset|rebase|clean))\b/i;
 
 function extractPath(input: Record<string, unknown>): string | null {
   const p = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
@@ -63,8 +62,7 @@ function checkAutoApprove(toolName: string, input: Record<string, unknown>): boo
   }
   if (toolName === "Bash") {
     const cmd = (input.command as string) ?? "";
-    if (BASH_DENY_RE.test(cmd)) return false;
-    return BASH_AUTO_RE.test(cmd);
+    return !BASH_DENY_RE.test(cmd);
   }
   return false;
 }
