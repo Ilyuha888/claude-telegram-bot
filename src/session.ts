@@ -48,7 +48,7 @@ import type {
 
 // Allowlist for auto-approved non-destructive tools (dec-20260420-003)
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const BASH_AUTO_RE = /^\s*(mv|mkdir|cp|find|touch|git\s+mv)\s/;
+const BASH_AUTO_RE = /^\s*(mv|mkdir|cp|find|touch|git\s+mv|python3|sed|bash\s+\/tmp\/|cat\s*>\s*\/tmp\/)\s?/;
 const BASH_DENY_RE = /\b(rm|git\s+push|git\s+commit|git\s+reset|git\s+rebase|sudo)\b/i;
 
 function extractPath(input: Record<string, unknown>): string | null {
