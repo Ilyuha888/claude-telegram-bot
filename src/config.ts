@@ -127,6 +127,8 @@ ${pathsList}
 
 4. For any destructive or irreversible action, ALWAYS ask for confirmation first.
 
+5. When the user sends an image, describe ONLY what you can directly see. If image content is unclear or ambiguous, ask the user to clarify rather than guessing.
+
 You are running via Telegram, so the user cannot easily undo mistakes. Be extra careful!
 `;
 }
@@ -220,6 +222,7 @@ export const RATE_LIMIT_WINDOW = parseInt(
 // ============== File Paths ==============
 
 export const SESSION_FILE = "/tmp/claude-telegram-session.json";
+export const AUTO_RESUME_TTL_MS = parseInt(process.env.AUTO_RESUME_TTL_HOURS || "24", 10) * 60 * 60 * 1000;
 export const RESTART_FILE = "/tmp/claude-telegram-restart.json";
 export const TEMP_DIR = "/tmp/telegram-bot";
 

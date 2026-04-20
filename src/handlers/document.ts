@@ -6,10 +6,11 @@
  */
 
 import type { Context } from "grammy";
+import type { UserContentBlock } from "../session";
 import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
+import { auditLog, auditLogRateLimit, buildMessageContext, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { isAudioFile, processAudioFile } from "./audio";
@@ -95,7 +96,7 @@ async function extractText(
       return result.text();
     } catch (error) {
       console.error("PDF parsing failed:", error);
-      return "[PDF parsing failed - ensure pdftotext is installed: brew install poppler]";
+      return "[PDF parsing failed - ensure pdftotext is installed: apt-get install poppler-utils]";
     }
   }
 
@@ -306,6 +307,64 @@ async function processArchive(
   }
 }
 
+
+/**
+ * Process a PDF using native SDK content blocks (no pdftotext dependency).
+ */
+async function processPdfBlocks(
+  ctx: Context,
+  pdfPath: string,
+  fileName: string,
+  caption: string | undefined,
+  userId: number,
+  username: string,
+  chatId: number
+): Promise<void> {
+  const stopProcessing = session.startProcessing();
+  const typing = startTypingIndicator(ctx);
+  const state = new StreamingState();
+  const statusCallback = createStatusCallback(ctx, state);
+
+  try {
+    const data = await Bun.file(pdfPath).arrayBuffer();
+    const base64Data = Buffer.from(data).toString('base64');
+
+    const blocks: UserContentBlock[] = [
+      {
+        type: 'text',
+        text: caption
+          ? `Document: ${fileName}\n\n${caption}`
+          : `Please analyze this document: ${fileName}`
+      },
+      {
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: base64Data }
+      }
+    ];
+
+    if (!session.isActive) {
+      const rawTitle = caption || `[PDF: ${fileName}]`;
+      session.conversationTitle = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
+    }
+
+    const response = await session.sendMessageStreaming(
+      blocks,
+      username,
+      userId,
+      statusCallback,
+      chatId,
+      ctx
+    );
+
+    await auditLog(userId, username, "DOCUMENT", `[PDF: ${fileName}] ${caption || ''}`, response);
+  } catch (error) {
+    await handleProcessingError(ctx, error, state.toolMessages);
+  } finally {
+    stopProcessing();
+    typing.stop();
+  }
+}
+
 /**
  * Process documents with Claude.
  */
@@ -467,7 +526,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       return;
     }
 
-    await processAudioFile(ctx, docPath, ctx.message?.caption, userId, username, chatId);
+    await processAudioFile(ctx, docPath, buildMessageContext(ctx) || undefined, userId, username, chatId);
     return;
   }
 
@@ -507,7 +566,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       ctx,
       docPath,
       fileName,
-      ctx.message?.caption,
+      buildMessageContext(ctx) || undefined,
       userId,
       username,
       chatId
@@ -528,12 +587,19 @@ export async function handleDocument(ctx: Context): Promise<void> {
       return;
     }
 
+    // PDFs: use native content blocks (no pdftotext dependency)
+    if (isPdf) {
+      await processPdfBlocks(ctx, docPath, fileName, buildMessageContext(ctx) || undefined, userId, username, chatId);
+      return;
+    }
+
+    // Text files: inline text extraction
     try {
       const content = await extractText(docPath, doc.mime_type);
       await processDocuments(
         ctx,
         [{ path: docPath, name: fileName, content }],
-        ctx.message?.caption,
+        buildMessageContext(ctx) || undefined,
         userId,
         username,
         chatId

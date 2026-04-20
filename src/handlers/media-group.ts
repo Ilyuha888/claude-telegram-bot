@@ -10,7 +10,7 @@ import type { Message } from "grammy/types";
 import type { PendingMediaGroup } from "../types";
 import { MEDIA_GROUP_TIMEOUT } from "../config";
 import { rateLimiter } from "../security";
-import { auditLogRateLimit } from "../utils";
+import { auditLogRateLimit, buildMessageContext } from "../utils";
 import { session } from "../session";
 
 /**
@@ -135,7 +135,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       pendingGroups.set(mediaGroupId, {
         items: [itemPath],
         ctx,
-        caption: ctx.message?.caption,
+        caption: buildMessageContext(ctx) || undefined,
         statusMsg,
         timeout: setTimeout(
           () => processGroup(mediaGroupId, processCallback),
@@ -148,8 +148,9 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       group.items.push(itemPath);
 
       // Update caption if this message has one
-      if (ctx.message?.caption && !group.caption) {
-        group.caption = ctx.message.caption;
+      if (!group.caption) {
+        const enriched = buildMessageContext(ctx);
+        if (enriched) group.caption = enriched;
       }
 
       // Reset timeout

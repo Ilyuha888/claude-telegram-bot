@@ -241,3 +241,56 @@ export async function checkInterrupt(text: string): Promise<string> {
 
   return strippedText;
 }
+
+// ============== Message Context Builder ==============
+
+import type { MessageOrigin } from "@grammyjs/types";
+
+function describeForwardOrigin(origin: MessageOrigin): string {
+  switch (origin.type) {
+    case "user": {
+      const u = origin.sender_user;
+      return u.username ? `@${u.username}` : u.first_name;
+    }
+    case "hidden_user":
+      return origin.sender_user_name;
+    case "chat":
+      return (origin.sender_chat as { title?: string }).title ?? "chat";
+    case "channel":
+      return (origin.chat as { title?: string }).title ?? "channel";
+  }
+}
+
+function truncateStr(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n - 1) + "…";
+}
+
+export function buildMessageContext(ctx: Context): string {
+  const msg = ctx.message;
+  if (!msg) return "";
+  const lines: string[] = [];
+
+  if ((msg as { forward_origin?: MessageOrigin }).forward_origin) {
+    lines.push(
+      `[Forwarded from ${describeForwardOrigin(
+        (msg as { forward_origin: MessageOrigin }).forward_origin
+      )}]`
+    );
+  }
+
+  if ((msg as { reply_to_message?: { text?: string; caption?: string } }).reply_to_message) {
+    const r = (msg as { reply_to_message: { text?: string; caption?: string } }).reply_to_message;
+    const src = r.text ?? r.caption ?? "[non-text message]";
+    lines.push(`[Replying to: "${truncateStr(src, 500)}"]`);
+  }
+
+  if ((msg as { quote?: { text: string } }).quote) {
+    const q = (msg as { quote: { text: string } }).quote;
+    lines.push(`[Quoting: "${truncateStr(q.text, 500)}"]`);
+  }
+
+  const body = (msg as { text?: string; caption?: string }).text ?? (msg as any).caption ?? "";
+  if (body) lines.push(body);
+
+  return lines.join("\n");
+}

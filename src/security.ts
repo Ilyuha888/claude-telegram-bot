@@ -140,9 +140,12 @@ export function checkCommandSafety(
           // Skip flags
           if (arg.startsWith("-") || arg.length <= 1) continue;
 
+          // Strip surrounding quotes before path validation
+          const unquotedArg = arg.replace(/^["']|["']$/g, "");
+
           // Check if path is allowed
-          if (!isPathAllowed(arg)) {
-            return [false, `rm target outside allowed paths: ${arg}`];
+          if (!isPathAllowed(unquotedArg)) {
+            return [false, `rm target outside allowed paths: ${unquotedArg}`];
           }
         }
       }

@@ -9,6 +9,7 @@ import {
   query,
   type Options,
   type SDKMessage,
+  type PermissionResult,
 } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync } from "fs";
 import type { Context } from "grammy";
@@ -16,6 +17,7 @@ import {
   ALLOWED_PATHS,
   MCP_SERVERS,
   SAFETY_PROMPT,
+  AUTO_RESUME_TTL_MS,
   SESSION_FILE,
   STREAMING_THROTTLE_MS,
   TEMP_PATHS,
@@ -23,18 +25,56 @@ import {
   THINKING_KEYWORDS,
   WORKING_DIR,
 } from "./config";
-import { formatToolStatus } from "./formatting";
+import { formatToolStatus, escapeHtml } from "./formatting";
 import {
   checkPendingAskUserRequests,
   checkPendingSendFileRequests,
 } from "./handlers/streaming";
+import {
+  awaitPermission,
+  createPermissionKeyboard,
+  formatPermissionPrompt,
+} from "./handlers/permission";
+import { handleAskUserQuestion } from "./handlers/question";
 import { checkCommandSafety, isPathAllowed } from "./security";
+import { auditLogTool } from "./utils";
+
 import type {
   SavedSession,
   SessionHistory,
   StatusCallback,
   TokenUsage,
 } from "./types";
+
+// Allowlist for auto-approved non-destructive tools (dec-20260420-003)
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+const BASH_AUTO_RE = /^\s*(mv|mkdir|cp|find|touch)\s/;
+const BASH_DENY_RE = /\b(rm|git\s+push|git\s+commit|git\s+reset|git\s+rebase|sudo)\b/i;
+
+function extractPath(input: Record<string, unknown>): string | null {
+  const p = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
+  return p ?? null;
+}
+
+function checkAutoApprove(toolName: string, input: Record<string, unknown>): boolean {
+  if (WRITE_TOOLS.has(toolName) || toolName === "Read") {
+    const p = extractPath(input);
+    return p !== null && isPathAllowed(p);
+  }
+  if (toolName === "Bash") {
+    const cmd = (input.command as string) ?? "";
+    if (BASH_DENY_RE.test(cmd)) return false;
+    return BASH_AUTO_RE.test(cmd);
+  }
+  return false;
+}
+
+
+
+export type UserContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } };
 
 /**
  * Determine thinking token budget based on message keywords.
@@ -88,6 +128,7 @@ class ClaudeSession {
   lastUsage: TokenUsage | null = null;
   lastMessage: string | null = null;
   conversationTitle: string | null = null;
+  private _pendingAutoResumeNotice: string | null = null;
 
   private abortController: AbortController | null = null;
   private isQueryRunning = false;
@@ -165,13 +206,41 @@ class ClaudeSession {
     return false;
   }
 
+
+  /**
+   * Auto-resume the most recent persisted session on first message after process restart.
+   * No-op if already in an active session. Guards on TTL and working_dir match.
+   */
+  tryAutoResume(): void {
+    if (this.sessionId !== null) return;
+
+    const sessions = this.getSessionList(); // already filters by WORKING_DIR
+    if (sessions.length === 0) return;
+
+    const latest = sessions[0]!;
+    const ageMs = Date.now() - new Date(latest.saved_at).getTime();
+    if (ageMs > AUTO_RESUME_TTL_MS) return;
+
+    this.sessionId = latest.session_id;
+    this.conversationTitle = latest.title;
+    this.lastActivity = new Date();
+
+    const ageMinutes = Math.round(ageMs / 60000);
+    const ageStr = ageMinutes < 60
+      ? `${ageMinutes}m ago`
+      : `${Math.round(ageMinutes / 60)}h ago`;
+
+    this._pendingAutoResumeNotice = `\u21a9\ufe0e resumed: "${latest.title}" (${ageStr})`;
+    console.log(`Auto-resumed session ${latest.session_id.slice(0, 8)}... (${ageStr})`);
+  }
+
   /**
    * Send a message to Claude with streaming updates via callback.
    *
    * @param ctx - grammY context for ask_user button display
    */
   async sendMessageStreaming(
-    message: string,
+    message: string | UserContentBlock[],
     username: string,
     userId: number,
     statusCallback: StatusCallback,
@@ -183,43 +252,117 @@ class ClaudeSession {
       process.env.TELEGRAM_CHAT_ID = String(chatId);
     }
 
+    // Auto-resume from disk on first message after process start
+    this.tryAutoResume();
+    const autoResumeNotice = this._pendingAutoResumeNotice;
+    this._pendingAutoResumeNotice = null;
+
     const isNewSession = !this.isActive;
-    const thinkingTokens = getThinkingLevel(message);
+    const thinkingText = typeof message === 'string'
+      ? message
+      : message.filter(b => b.type === 'text').map(b => (b as {type:'text';text:string}).text).join(' ');
+    const thinkingTokens = getThinkingLevel(thinkingText);
     const thinkingLabel =
       { 0: "off", 10000: "normal", 50000: "deep" }[thinkingTokens] ||
       String(thinkingTokens);
 
-    // Inject current date/time at session start so Claude doesn't need to call a tool for it
-    let messageToSend = message;
-    if (isNewSession) {
-      const now = new Date();
-      const datePrefix = `[Current date/time: ${now.toLocaleDateString(
-        "en-US",
-        {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZoneName: "short",
-        }
-      )}]\n\n`;
-      messageToSend = datePrefix + message;
+    // Build promptInput: string for text messages, AsyncIterable<SDKUserMessage> for content blocks
+    let promptInput: string | AsyncIterable<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage>;
+
+    if (typeof message === 'string') {
+      let messageToSend = message;
+      if (isNewSession) {
+        const now = new Date();
+        const datePrefix = `[Current date/time: ${now.toLocaleDateString(
+          "en-US",
+          {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZoneName: "short",
+          }
+        )}]\n\n`;
+        messageToSend = datePrefix + message;
+      }
+      promptInput = messageToSend;
+    } else {
+      let blocks: UserContentBlock[] = message;
+      if (isNewSession) {
+        const now = new Date();
+        const datePrefix = `[Current date/time: ${now.toLocaleDateString(
+          "en-US",
+          {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZoneName: "short",
+          }
+        )}]\n\n`;
+        blocks = [{ type: 'text', text: datePrefix }, ...blocks];
+      }
+      const sdkMsg = {
+        type: 'user' as const,
+        session_id: '',
+        message: { role: 'user' as const, content: blocks as unknown as Array<{ type: string }> },
+        parent_tool_use_id: null as null,
+      };
+      promptInput = (async function*() { yield sdkMsg as import("@anthropic-ai/claude-agent-sdk").SDKUserMessage; })();
     }
 
     // Build SDK V1 options - supports all features
     const options: Options = {
       model: "claude-sonnet-4-5",
       cwd: WORKING_DIR,
-      settingSources: ["user", "project"],
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
+      settingSources: ["user", "local", "project"],
+      permissionMode: "default",
+      allowDangerouslySkipPermissions: false,
       systemPrompt: SAFETY_PROMPT,
       mcpServers: MCP_SERVERS,
       maxThinkingTokens: thinkingTokens,
       additionalDirectories: ALLOWED_PATHS,
       resume: this.sessionId || undefined,
+      canUseTool: ctx
+        ? async (
+            toolName: string,
+            input: Record<string, unknown>,
+            { decisionReason, blockedPath }: { signal: AbortSignal; decisionReason?: string; blockedPath?: string; [key: string]: unknown }
+          ): Promise<PermissionResult> => {
+            // Intercept AskUserQuestion — render options as Telegram inline keyboard,
+            // deny with the user's selection as message so Claude parses it as the answer.
+            if (toolName === "AskUserQuestion") {
+              return handleAskUserQuestion(ctx, input);
+            }
+            // Auto-approve non-destructive tools within ALLOWED_PATHS (dec-20260420-003)
+            if (checkAutoApprove(toolName, input)) {
+              const autoDisplay = formatToolStatus(toolName, input);
+              console.log('AUTO-APPROVED: ' + toolName + ' — ' + autoDisplay);
+              auditLogTool(ctx.from?.id ?? 0, ctx.from?.username ?? "bot", toolName, input).catch(() => {});
+              return { behavior: "allow", updatedInput: input };
+            }
+            const requestId = crypto.randomUUID();
+            const toolDisplay = formatToolStatus(toolName, input);
+            const promptText = formatPermissionPrompt(
+              escapeHtml(toolDisplay),
+              decisionReason,
+              blockedPath
+            );
+            const keyboard = createPermissionKeyboard(requestId);
+            try {
+              await ctx.reply(promptText, { reply_markup: keyboard, parse_mode: "HTML" });
+            } catch (err) {
+              console.error("Failed to send permission keyboard:", err);
+              return { behavior: "deny", message: "Could not reach Telegram to ask permission", interrupt: true };
+            }
+            console.log(`Permission request ${requestId} for ${toolName} — awaiting Telegram response`);
+            return awaitPermission(requestId, input, toolDisplay);
+          }
+        : undefined,
     };
 
     // Add Claude Code executable path if set (required for standalone builds)
@@ -263,10 +406,15 @@ class ClaudeSession {
     let queryCompleted = false;
     let askUserTriggered = false;
 
+    // Send auto-resume notice as a standalone message before the query
+    if (autoResumeNotice && ctx) {
+      try { await ctx.reply(autoResumeNotice); } catch { /* non-fatal */ }
+    }
+
     try {
       // Use V1 query() API - supports all options including cwd, mcpServers, etc.
       const queryInstance = query({
-        prompt: messageToSend,
+        prompt: promptInput,
         options: {
           ...options,
           abortController: this.abortController,
@@ -528,9 +676,10 @@ class ClaudeSession {
       // Keep only the last MAX_SESSIONS
       history.sessions = history.sessions.slice(0, MAX_SESSIONS);
 
-      // Save
-      Bun.write(SESSION_FILE, JSON.stringify(history, null, 2));
-      console.log(`Session saved to ${SESSION_FILE}`);
+      // Save (async — surface write errors via promise chain)
+      Bun.write(SESSION_FILE, JSON.stringify(history, null, 2))
+        .then(() => console.log(`Session saved to ${SESSION_FILE}`))
+        .catch((err) => console.warn(`Failed to save session: ${err}`));
     } catch (error) {
       console.warn(`Failed to save session: ${error}`);
     }

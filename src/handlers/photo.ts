@@ -5,10 +5,11 @@
  */
 
 import type { Context } from "grammy";
+import type { UserContentBlock } from "../session";
 import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
+import { auditLog, auditLogRateLimit, buildMessageContext, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 
@@ -59,17 +60,27 @@ async function processPhotos(
   // Mark processing started
   const stopProcessing = session.startProcessing();
 
-  // Build prompt
-  let prompt: string;
-  if (photoPaths.length === 1) {
-    prompt = caption
-      ? `[Photo: ${photoPaths[0]}]\n\n${caption}`
-      : `Please analyze this image: ${photoPaths[0]}`;
+  // Build content blocks
+  const blocks: UserContentBlock[] = [];
+
+  if (caption) {
+    blocks.push({ type: 'text', text: caption });
   } else {
-    const pathsList = photoPaths.map((p, i) => `${i + 1}. ${p}`).join("\n");
-    prompt = caption
-      ? `[Photos:\n${pathsList}]\n\n${caption}`
-      : `Please analyze these ${photoPaths.length} images:\n${pathsList}`;
+    blocks.push({ type: 'text', text: photoPaths.length === 1 ? 'User sent a photo:' : `User sent ${photoPaths.length} photos:` });
+  }
+
+  for (const photoPath of photoPaths) {
+    try {
+      const data = await Bun.file(photoPath).arrayBuffer();
+      const base64Data = Buffer.from(data).toString('base64');
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: base64Data }
+      });
+    } catch (err) {
+      console.error(`Failed to read photo ${photoPath}:`, err);
+      blocks.push({ type: 'text', text: `[Photo unavailable: ${photoPath}]` });
+    }
   }
 
   // Set conversation title (if new session)
@@ -89,7 +100,7 @@ async function processPhotos(
 
   try {
     const response = await session.sendMessageStreaming(
-      prompt,
+      blocks,
       username,
       userId,
       statusCallback,
@@ -97,7 +108,8 @@ async function processPhotos(
       ctx
     );
 
-    await auditLog(userId, username, "PHOTO", prompt, response);
+    const auditSummary = `[Photo x${photoPaths.length}]${caption ? ` ${caption}` : ''}`;
+    await auditLog(userId, username, "PHOTO", auditSummary, response);
   } catch (error) {
     await handleProcessingError(ctx, error, state.toolMessages);
   } finally {
@@ -171,7 +183,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     await processPhotos(
       ctx,
       [photoPath],
-      ctx.message?.caption,
+      buildMessageContext(ctx) || undefined,
       userId,
       username,
       chatId

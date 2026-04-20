@@ -8,6 +8,7 @@ import { ALLOWED_USERS } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
   auditLog,
+  buildMessageContext,
   auditLogRateLimit,
   checkInterrupt,
   startTypingIndicator,
@@ -21,7 +22,7 @@ export async function handleText(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
-  let message = ctx.message?.text;
+  let message = buildMessageContext(ctx);
 
   if (!userId || !message || !chatId) {
     return;

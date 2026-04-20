@@ -103,6 +103,29 @@ console.log("Starting bot...");
 const botInfo = await bot.api.getMe();
 console.log(`Bot started: @${botInfo.username}`);
 
+// Register the / autocomplete menu with Telegram.
+// Without this, Telegram shows whatever was last set via BotFather (often stale).
+// Write to all_private_chats scope — it outranks the default scope for private
+// chats, which is the only kind this bot serves. Without this, a stale
+// all_private_chats list left over from BotFather can mask the default list.
+try {
+  const commandList = [
+    { command: "new", description: "Start fresh session" },
+    { command: "stop", description: "Stop current query" },
+    { command: "status", description: "Show detailed status" },
+    { command: "resume", description: "Resume last session" },
+    { command: "retry", description: "Retry last message" },
+    { command: "restart", description: "Restart the bot" },
+  ];
+  await bot.api.setMyCommands(commandList, {
+    scope: { type: "all_private_chats" },
+  });
+  await bot.api.setMyCommands(commandList);
+  console.log("Registered / command menu with Telegram (all_private_chats + default)");
+} catch (err) {
+  console.warn("Failed to register commands with Telegram:", err);
+}
+
 // Check for pending restart message to update
 if (existsSync(RESTART_FILE)) {
   try {

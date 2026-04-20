@@ -4,9 +4,12 @@
  * Handles inline keyboard button presses (ask_user MCP integration).
  */
 
+import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import { session } from "../session";
+import { resolvePermissionRequest } from "./permission";
+import { resolveQuestionRequest } from "./question";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
@@ -38,7 +41,19 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3. Parse callback data: askuser:{request_id}:{option_index}
+  // 3. Handle permission requests: permask:{request_id}:{allow|deny}
+  if (callbackData.startsWith("permask:")) {
+    await handlePermissionCallback(ctx, callbackData);
+    return;
+  }
+
+  // 3b. Handle AskUserQuestion answers: askq:{request_id}:{option_index}
+  if (callbackData.startsWith("askq:")) {
+    await handleQuestionCallback(ctx, callbackData);
+    return;
+  }
+
+  // 4. Parse callback data: askuser:{request_id}:{option_index}
   if (!callbackData.startsWith("askuser:")) {
     await ctx.answerCallbackQuery();
     return;
@@ -149,6 +164,119 @@ export async function handleCallback(ctx: Context): Promise<void> {
     }
   } finally {
     typing.stop();
+  }
+}
+
+/**
+ * Handle permission requests (permask:{requestId}:{allow|deny}).
+ * Does NOT stop the current session — resolves the in-flight canUseTool Promise
+ * so streaming can continue after the user's decision.
+ */
+async function handlePermissionCallback(
+  ctx: Context,
+  callbackData: string
+): Promise<void> {
+  const parts = callbackData.split(":");
+  const requestId = parts[1];
+  const decision = parts[2];
+
+  if (!requestId || (decision !== "allow" && decision !== "deny")) {
+    await ctx.answerCallbackQuery({ text: "Invalid permission callback" });
+    return;
+  }
+
+  const { ok, toolDisplay } = resolvePermissionRequest(requestId, decision as "allow" | "deny");
+
+  if (!ok) {
+    await ctx.answerCallbackQuery({ text: "Request expired or already resolved" });
+    return;
+  }
+
+  const verdict = decision === "allow" ? "✅ Allowed" : "❌ Denied";
+  const MAX_TOOL_LEN = 120;
+  const toolSuffix = toolDisplay
+    ? ` · ${toolDisplay.length > MAX_TOOL_LEN ? toolDisplay.slice(0, MAX_TOOL_LEN - 1) + "…" : toolDisplay}`
+    : "";
+  const label = `${verdict}${toolSuffix}`;
+
+  // Remove inline keyboard buttons and update text
+  try {
+    await ctx.editMessageText(label, { reply_markup: new InlineKeyboard() });
+  } catch (editErr) {
+    console.warn("Failed to edit permission message:", editErr);
+    // Fallback: try to at least remove the keyboard
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+    } catch {
+      // non-critical
+    }
+  }
+
+  await ctx.answerCallbackQuery({ text: verdict });
+
+  // Send typing indicator so user knows streaming is continuing
+  if (decision === "allow" && ctx.chat?.id) {
+    try {
+      await ctx.api.sendChatAction(ctx.chat.id, "typing");
+    } catch {
+      // non-critical
+    }
+  }
+  // No session.stop() here — the streaming loop continues after the promise resolves
+}
+
+/**
+ * Handle AskUserQuestion answers (askq:{requestId}:{optionIndex}).
+ * Resolves the in-flight question Promise with the user's selection so Claude
+ * receives the answer via deny-with-message and continues streaming.
+ */
+async function handleQuestionCallback(
+  ctx: Context,
+  callbackData: string
+): Promise<void> {
+  const parts = callbackData.split(":");
+  if (parts.length !== 3) {
+    await ctx.answerCallbackQuery({ text: "Invalid question callback" });
+    return;
+  }
+
+  const requestId = parts[1]!;
+  const optionIndex = parseInt(parts[2]!, 10);
+
+  if (Number.isNaN(optionIndex)) {
+    await ctx.answerCallbackQuery({ text: "Invalid option index" });
+    return;
+  }
+
+  const { ok, label } = resolveQuestionRequest(requestId, optionIndex);
+
+  if (!ok) {
+    await ctx.answerCallbackQuery({
+      text: "This question has already been answered or timed out",
+    });
+    return;
+  }
+
+  const confirmation = `✅ Answered: ${label}`;
+  try {
+    await ctx.editMessageText(confirmation, { reply_markup: new InlineKeyboard() });
+  } catch (editErr) {
+    console.warn("Failed to edit question message:", editErr);
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+    } catch {
+      // non-critical
+    }
+  }
+
+  await ctx.answerCallbackQuery({ text: `Selected: ${(label || "").slice(0, 50)}` });
+
+  if (ctx.chat?.id) {
+    try {
+      await ctx.api.sendChatAction(ctx.chat.id, "typing");
+    } catch {
+      // non-critical
+    }
   }
 }
 
