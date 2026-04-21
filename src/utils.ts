@@ -265,7 +265,10 @@ function truncateStr(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
-export function buildMessageContext(ctx: Context): string {
+const VOICE_TRANSCRIPT_NOTICE =
+  "[Voice transcript — interpret for intent, not literal wording. Filler words, incomplete sentences, and STT errors are expected.]";
+
+export function buildMessageContext(ctx: Context, opts?: { voiceTranscript?: string }): string {
   const msg = ctx.message;
   if (!msg) return "";
   const lines: string[] = [];
@@ -289,8 +292,13 @@ export function buildMessageContext(ctx: Context): string {
     lines.push(`[Quoting: "${truncateStr(q.text, 500)}"]`);
   }
 
-  const body = (msg as { text?: string; caption?: string }).text ?? (msg as any).caption ?? "";
-  if (body) lines.push(body);
+  if (opts?.voiceTranscript !== undefined) {
+    lines.push(VOICE_TRANSCRIPT_NOTICE);
+    lines.push(opts.voiceTranscript);
+  } else {
+    const body = (msg as { text?: string; caption?: string }).text ?? (msg as any).caption ?? "";
+    if (body) lines.push(body);
+  }
 
   return lines.join("\n");
 }
