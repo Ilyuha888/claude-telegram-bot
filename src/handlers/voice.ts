@@ -12,6 +12,7 @@ import {
   auditLogRateLimit,
   transcribeVoice,
   startTypingIndicator,
+  buildMessageContext,
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 
@@ -110,9 +111,10 @@ export async function handleVoice(ctx: Context): Promise<void> {
     const state = new StreamingState();
     const statusCallback = createStatusCallback(ctx, state);
 
-    // 11. Send to Claude
+    // 11. Send to Claude — enrich with voice notice and any forward/reply/quote provenance
+    const enrichedMessage = buildMessageContext(ctx, { voiceTranscript: transcript });
     const claudeResponse = await session.sendMessageStreaming(
-      transcript,
+      enrichedMessage,
       username,
       userId,
       statusCallback,
@@ -120,7 +122,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       ctx
     );
 
-    // 12. Audit log
+    // 12. Audit log — record raw transcript, not the enriched prompt
     await auditLog(userId, username, "VOICE", transcript, claudeResponse);
   } catch (error) {
     console.error("Error processing voice:", error);
