@@ -116,3 +116,7 @@ launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 tail -f /tmp/claude-telegram-bot-ts.log
 tail -f /tmp/claude-telegram-bot-ts.err
 ```
+
+## Governance
+
+For architecture invariants, haft decisions, and safety rules, see `AGENTS.md` and `.haft/`.
