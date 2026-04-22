@@ -103,7 +103,7 @@ export async function auditLogTool(
     user_id: userId,
     username,
     tool_name: toolName,
-    tool_input: toolInput,
+    tool_input: JSON.stringify(toolInput),
     blocked,
   };
   if (blocked && reason) {
