@@ -230,7 +230,7 @@ export const TEMP_DIR = "/tmp/telegram-bot";
 export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
 // Ensure temp directory exists
-await Bun.write(`${TEMP_DIR}/.keep`, "");
+try { await Bun.write(`${TEMP_DIR}/.keep`, ""); } catch { /* non-fatal: temp dir may be root-owned */ }
 
 // ============== Validation ==============
 

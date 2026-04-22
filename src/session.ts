@@ -190,7 +190,11 @@ class ClaudeSession {
     // If a query is actively running, abort it
     if (this.isQueryRunning && this.abortController) {
       this.stopRequested = true;
-      this.abortController.abort();
+      try {
+        this.abortController.abort();
+      } catch {
+        // SDK abort listeners may throw AbortError synchronously
+      }
       console.log("Stop requested - aborting current query");
       return "stopped";
     }
@@ -596,10 +600,9 @@ class ClaudeSession {
         errorStr.includes("cancel") || errorStr.includes("abort");
 
       if (
-        isCleanupError &&
-        (queryCompleted || askUserTriggered || this.stopRequested)
+        isCleanupError
       ) {
-        console.warn(`Suppressed post-completion error: ${error}`);
+        console.warn(`Query aborted: ${error}`);
       } else {
         console.error(`Error in query: ${error}`);
         this.lastError = String(error).slice(0, 100);
