@@ -12,6 +12,7 @@ import { resolvePermissionRequest } from "./permission";
 import { resolveQuestionRequest } from "./question";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
+import { handleSessions, handleRepos } from "./mode2";
 import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 
@@ -44,6 +45,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // 3. Handle permission requests: permask:{request_id}:{allow|deny}
   if (callbackData.startsWith("permask:")) {
     await handlePermissionCallback(ctx, callbackData);
+    return;
+  }
+
+  // 3c. Handle Mode-2 menu button callbacks: menu:{action}
+  if (callbackData.startsWith("menu:")) {
+    await handleMenuCallback(ctx, callbackData);
     return;
   }
 
@@ -341,5 +348,25 @@ async function handleResumeCallback(
     // Don't show error to user - session is still resumed, recap just failed
   } finally {
     typing.stop();
+  }
+}
+
+async function handleMenuCallback(ctx: Context, callbackData: string): Promise<void> {
+  const action = callbackData.slice("menu:".length);
+  await ctx.answerCallbackQuery();
+  switch (action) {
+    case "sessions":
+      return handleSessions(ctx);
+    case "repos":
+      return handleRepos(ctx);
+    case "work":
+      await ctx.reply("Send: /work <repo> [path] [worktree] [branch]");
+      return;
+    case "close":
+      await ctx.reply("Send: /close <session-id>");
+      return;
+    default:
+      await ctx.reply("Unknown menu action.");
+      return;
   }
 }

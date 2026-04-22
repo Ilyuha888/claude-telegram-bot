@@ -113,7 +113,7 @@ describe("reply_to_message", () => {
     const result = buildMessageContext(
       makeCtx({ text: TEXT, reply_to_message: { text: longText } })
     );
-    const snippetLine = result.split("\n")[0];
+    const snippetLine = result.split("\n")[0]!;
     expect(snippetLine.length).toBeLessThan(520);
     expect(snippetLine).toContain("…");
   });
