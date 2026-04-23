@@ -1,3 +1,16 @@
+---
+id: evid-20260423-reaper
+kind: EvidencePack
+version: 1
+status: active
+title: Mode-2 Idle Reaper — 2026-04-23
+created_at: 2026-04-23T10:22:00Z
+updated_at: 2026-04-23T10:22:00Z
+links:
+  - ref: dec-20260422-003
+    type: supports
+---
+
 # Mode-2 Idle Reaper — 2026-04-23
 
 ## Test procedure
