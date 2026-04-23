@@ -6,7 +6,7 @@
         "serve"
       ],
       "env": {
-        "HAFT_PROJECT_ROOT": "/home/assistant/claude-telegram-bot"
+        "HAFT_PROJECT_ROOT": "/home/assistant/repos/claude-telegram-bot"
       }
     }
   }
