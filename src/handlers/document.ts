@@ -526,7 +526,14 @@ export async function handleDocument(ctx: Context): Promise<void> {
       return;
     }
 
-    await processAudioFile(ctx, docPath, buildMessageContext(ctx) || undefined, userId, username, chatId);
+    await processAudioFile(
+      ctx,
+      docPath,
+      buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
+      userId,
+      username,
+      chatId
+    );
     return;
   }
 
@@ -566,7 +573,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       ctx,
       docPath,
       fileName,
-      buildMessageContext(ctx) || undefined,
+      buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
       userId,
       username,
       chatId
@@ -589,7 +596,15 @@ export async function handleDocument(ctx: Context): Promise<void> {
 
     // PDFs: use native content blocks (no pdftotext dependency)
     if (isPdf) {
-      await processPdfBlocks(ctx, docPath, fileName, buildMessageContext(ctx) || undefined, userId, username, chatId);
+      await processPdfBlocks(
+        ctx,
+        docPath,
+        fileName,
+        buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
+        userId,
+        username,
+        chatId
+      );
       return;
     }
 
@@ -599,7 +614,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       await processDocuments(
         ctx,
         [{ path: docPath, name: fileName, content }],
-        buildMessageContext(ctx) || undefined,
+        buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
         userId,
         username,
         chatId

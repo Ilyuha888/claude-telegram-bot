@@ -268,7 +268,35 @@ function truncateStr(s: string, n: number): string {
 const VOICE_TRANSCRIPT_NOTICE =
   "[Voice transcript — interpret for intent, not literal wording. Filler words, incomplete sentences, and STT errors are expected.]";
 
-export function buildMessageContext(ctx: Context, opts?: { voiceTranscript?: string }): string {
+function formatFileSize(bytes: number): string {
+  if (bytes <= 0) return "unknown size";
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function attachmentHintBlock(paths: string[]): string {
+  if (paths.length === 0) return "";
+  const lines = ["[Attachments on disk:"];
+  for (const p of paths) {
+    try {
+      const f = Bun.file(p);
+      const size = f.size;
+      const mime = f.type || "application/octet-stream";
+      lines.push(`  - ${p} (${mime}, ${formatFileSize(size)})`);
+    } catch {
+      lines.push(`  - ${p}`);
+    }
+  }
+  lines.push("]");
+  return lines.join("\n");
+}
+
+export function buildMessageContext(
+  ctx: Context,
+  opts?: { voiceTranscript?: string; attachments?: string[] }
+): string {
   const msg = ctx.message;
   if (!msg) return "";
   const lines: string[] = [];
@@ -290,6 +318,13 @@ export function buildMessageContext(ctx: Context, opts?: { voiceTranscript?: str
   if ((msg as { quote?: { text: string } }).quote) {
     const q = (msg as { quote: { text: string } }).quote;
     lines.push(`[Quoting: "${truncateStr(q.text, 500)}"]`);
+  }
+
+  // Attachment paths on disk — lets the agent Read the bytes and Write them
+  // into the vault. Placed before the body so the user's own text stays last.
+  if (opts?.attachments && opts.attachments.length > 0) {
+    const hint = attachmentHintBlock(opts.attachments);
+    if (hint) lines.push(hint);
   }
 
   if (opts?.voiceTranscript !== undefined) {

@@ -81,6 +81,29 @@ MCP servers defined in `mcp-config.ts`.
 
 **After code changes**: Restart the bot so changes can be tested. Use `launchctl kickstart -k gui/$(id -u)/com.claude-telegram-ts` if running as a service, or `bun run start` for manual runs.
 
+## Attachment persistence contract
+
+When the user sends photos or documents via Telegram, each message's user turn includes a machine-readable block:
+
+```
+[Attachments on disk:
+  - /tmp/telegram-bot/photo_1714082400000_a7b3c2.jpg (image/jpeg, 2.30 MB)
+  - /tmp/telegram-bot/visa_receipt.pdf (application/pdf, 180 KB)
+]
+```
+
+The files under `/tmp/telegram-bot/` are Read-allowed (TEMP_PATHS) and survive the turn. The vault and other repos under `REPOS_DIR` are Write-allowed.
+
+When the user asks to persist an attachment (e.g. "attach this to my visa note"):
+
+1. `Read` the bytes from the `/tmp/telegram-bot/` path.
+2. `Write` them into a sibling `files/` directory next to the target note, using the convention `YYYY-MM-DD_HHMMSS_<original-basename>.<ext>` (or a short content hash if no sensible name exists).
+3. `Edit` the note to add a wikilink to the saved file (Obsidian style: `![[files/<filename>]]` for images, `[[files/<filename>]]` otherwise).
+4. Commit via `git add <files>` + `git commit -m "..."` — the commit-confirm prompt will surface on Telegram; user approval goes through the existing callback flow.
+5. Reply with the absolute paths of the saved files so the user can verify.
+
+The attachment hint is in addition to the SDK's inline image/PDF content blocks — vision still works. Use the hint when the user intent is persistence, not analysis.
+
 ## Standalone Build
 
 The bot can be compiled to a standalone binary with `bun build --compile`. This is used by the ClaudeBot macOS app wrapper.

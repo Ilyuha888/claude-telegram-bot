@@ -80,10 +80,16 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       }
     }
 
+    // Build final caption now that all items are known — includes the
+    // [Attachments on disk:] block so the agent can persist them to the vault.
+    const captionCtx = group.captionCtx ?? group.ctx;
+    const caption =
+      buildMessageContext(captionCtx, { attachments: group.items }) || undefined;
+
     await processCallback(
       group.ctx,
       group.items,
-      group.caption,
+      caption,
       userId,
       username,
       chatId
@@ -135,7 +141,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       pendingGroups.set(mediaGroupId, {
         items: [itemPath],
         ctx,
-        caption: buildMessageContext(ctx) || undefined,
+        captionCtx: buildMessageContext(ctx) ? ctx : undefined,
         statusMsg,
         timeout: setTimeout(
           () => processGroup(mediaGroupId, processCallback),
@@ -147,10 +153,10 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       const group = pendingGroups.get(mediaGroupId)!;
       group.items.push(itemPath);
 
-      // Update caption if this message has one
-      if (!group.caption) {
-        const enriched = buildMessageContext(ctx);
-        if (enriched) group.caption = enriched;
+      // Remember the first ctx that has actual caption/forward/reply context,
+      // in case item 1 had none and a later one does.
+      if (!group.captionCtx && buildMessageContext(ctx)) {
+        group.captionCtx = ctx;
       }
 
       // Reset timeout

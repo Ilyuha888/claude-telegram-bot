@@ -73,7 +73,10 @@ export interface AuditEvent {
 export interface PendingMediaGroup {
   items: string[];
   ctx: Context;
-  caption?: string;
+  // First ctx whose message carries caption/forward/reply context — used to
+  // build the final caption (with attachment paths) at processGroup time.
+  // Falls back to ctx when no item has any context worth surfacing.
+  captionCtx?: Context;
   statusMsg?: Message;
   timeout: Timer;
 }

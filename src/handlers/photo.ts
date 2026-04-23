@@ -183,7 +183,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     await processPhotos(
       ctx,
       [photoPath],
-      buildMessageContext(ctx) || undefined,
+      buildMessageContext(ctx, { attachments: [photoPath] }) || undefined,
       userId,
       username,
       chatId
