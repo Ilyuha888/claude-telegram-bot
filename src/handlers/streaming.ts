@@ -16,6 +16,7 @@ import {
   STREAMING_THROTTLE_MS,
   BUTTON_LABEL_MAX_LENGTH,
 } from "../config";
+import { auditLogTool } from "../utils";
 
 /**
  * Create inline keyboard for ask_user options.
@@ -87,10 +88,16 @@ const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".flac", ".m4a"]);
 
 /**
  * Check for pending send-file requests and deliver files via Telegram.
+ *
+ * Every attempt — success or failure — is audit-logged with the resolved
+ * path, size, chat id, and send kind so outbound file traffic is
+ * reconstructable from the audit log alone.
  */
 export async function checkPendingSendFileRequests(
   ctx: Context,
-  chatId: number
+  chatId: number,
+  userId: number,
+  username: string
 ): Promise<boolean> {
   const glob = new Bun.Glob("send-file-*.json");
   let fileSent = false;
@@ -108,11 +115,22 @@ export async function checkPendingSendFileRequests(
 
       const filePath: string = data.file_path || "";
       const caption: string | undefined = data.caption || undefined;
+      const sizeBytes: number =
+        typeof data.size_bytes === "number" ? data.size_bytes : 0;
+      const sendKind: string =
+        typeof data.send_kind === "string" ? data.send_kind : "";
 
       if (!filePath) {
         try { unlinkSync(filepath); } catch { /* ignore */ }
         continue;
       }
+
+      const auditInput = {
+        file_path: filePath,
+        size_bytes: sizeBytes,
+        chat_id: chatId,
+        send_kind: sendKind,
+      };
 
       try {
         const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
@@ -129,8 +147,19 @@ export async function checkPendingSendFileRequests(
         }
 
         fileSent = true;
+        auditLogTool(userId, username, "send_file:delivered", auditInput).catch(
+          () => {}
+        );
       } catch (sendError) {
         console.error(`Failed to send file ${filePath}:`, sendError);
+        auditLogTool(
+          userId,
+          username,
+          "send_file:failed",
+          auditInput,
+          true,
+          String(sendError).slice(0, 200)
+        ).catch(() => {});
         await ctx.reply(
           `Failed to send file: ${filePath.split("/").pop() || "unknown"}`
         );

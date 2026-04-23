@@ -109,6 +109,17 @@ export const ALLOWED_PATHS: string[] = allowedPathsStr
       .filter(Boolean)
   : defaultAllowedPaths;
 
+// Propagate the resolved allowlist into MCP subprocess servers that enforce
+// paths (currently only send-file). Subprocesses can't see the bot's
+// defaultAllowedPaths, so we serialize the effective list into their env.
+const sendFileEntry = MCP_SERVERS["send-file"];
+if (sendFileEntry && !("type" in sendFileEntry)) {
+  sendFileEntry.env = {
+    ...(sendFileEntry.env ?? {}),
+    ALLOWED_PATHS: ALLOWED_PATHS.join(","),
+  };
+}
+
 // Build safety prompt dynamically from ALLOWED_PATHS
 function buildSafetyPrompt(allowedPaths: string[]): string {
   const pathsList = allowedPaths

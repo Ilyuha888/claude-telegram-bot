@@ -538,7 +538,12 @@ class ClaudeSession {
               if (toolName.startsWith("mcp__send-file") && ctx && chatId) {
                 await new Promise((resolve) => setTimeout(resolve, 200));
                 for (let attempt = 0; attempt < 3; attempt++) {
-                  const sent = await checkPendingSendFileRequests(ctx, chatId);
+                  const sent = await checkPendingSendFileRequests(
+                    ctx,
+                    chatId,
+                    userId,
+                    username
+                  );
                   if (sent) break;
                   if (attempt < 2) {
                     await new Promise((resolve) => setTimeout(resolve, 100));
