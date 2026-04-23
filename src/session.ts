@@ -644,6 +644,7 @@ class ClaudeSession {
     this.lastActivity = null;
     this.conversationTitle = null;
     this._justCleared = true;
+    this.stopRequested = false;
     console.log("Session cleared");
   }
 

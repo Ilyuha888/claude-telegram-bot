@@ -123,18 +123,13 @@ console.log(`Bot started: @${botInfo.username}`);
 // all_private_chats list left over from BotFather can mask the default list.
 try {
   const commandList = [
-    { command: "new", description: "Start fresh session" },
-    { command: "stop", description: "Stop current query" },
-    { command: "status", description: "Show detailed status" },
-    { command: "resume", description: "Resume last session" },
-    { command: "retry", description: "Retry last message" },
+    { command: "new",     description: "Start fresh session" },
+    { command: "stop",    description: "Stop current query" },
+    { command: "retry",   description: "Retry last message" },
+    { command: "status",  description: "Show status" },
+    { command: "resume",  description: "Resume last session" },
     { command: "restart", description: "Restart the bot" },
-    { command: "work",     description: "Spawn a remote coding session (Mode 2)" },
-    { command: "sessions", description: "List active Mode-2 sessions" },
-    { command: "attach",   description: "Attach a Mode-2 session to this chat" },
-    { command: "close",    description: "Close a Mode-2 session" },
-    { command: "repos",    description: "List available repos on VM" },
-    { command: "menu",     description: "Open the Mode-2 inline menu" },
+    { command: "menu",    description: "Repos · Sessions · Work" },
   ];
   await bot.api.setMyCommands(commandList, {
     scope: { type: "all_private_chats" },
@@ -168,6 +163,11 @@ if (existsSync(RESTART_FILE)) {
 
 // Start with concurrent runner (commands work immediately)
 const runner = run(bot);
+
+// Mode-2 boot tasks: resume dead sessions, then start idle reaper
+import { resumeOnBoot, startReaper } from "./mode2/reaper";
+resumeOnBoot().catch((err) => console.error("resumeOnBoot error:", err));
+startReaper();
 
 // Graceful shutdown
 const stopRunner = () => {

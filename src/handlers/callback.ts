@@ -12,7 +12,7 @@ import { resolvePermissionRequest } from "./permission";
 import { resolveQuestionRequest } from "./question";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
-import { handleSessions, handleRepos } from "./mode2";
+import { handleSessions, handleRepos, handleWork, handleClose, handleMode2Callback } from "./mode2";
 import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 
@@ -48,9 +48,15 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3c. Handle Mode-2 menu button callbacks: menu:{action}
+  // 3c. Handle Mode-2 inline nav callbacks: m2:{action}
+  if (callbackData.startsWith("m2:")) {
+    await handleMode2Callback(ctx, callbackData.slice("m2:".length));
+    return;
+  }
+
+  // Legacy menu: callbacks (kept for any in-flight keyboards)
   if (callbackData.startsWith("menu:")) {
-    await handleMenuCallback(ctx, callbackData);
+    await handleLegacyMenuCallback(ctx, callbackData);
     return;
   }
 
@@ -351,22 +357,15 @@ async function handleResumeCallback(
   }
 }
 
-async function handleMenuCallback(ctx: Context, callbackData: string): Promise<void> {
+async function handleLegacyMenuCallback(ctx: Context, callbackData: string): Promise<void> {
   const action = callbackData.slice("menu:".length);
   await ctx.answerCallbackQuery();
   switch (action) {
-    case "sessions":
-      return handleSessions(ctx);
-    case "repos":
-      return handleRepos(ctx);
-    case "work":
-      await ctx.reply("Send: /work <repo> [path] [worktree] [branch]");
-      return;
-    case "close":
-      await ctx.reply("Send: /close <session-id>");
-      return;
+    case "sessions": return handleSessions(ctx);
+    case "repos":    return handleRepos(ctx);
+    case "work":     return handleWork(ctx);
+    case "close":    return handleClose(ctx);
     default:
       await ctx.reply("Unknown menu action.");
-      return;
   }
 }

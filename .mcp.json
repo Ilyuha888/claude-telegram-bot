@@ -4,7 +4,10 @@
       "command": "haft",
       "args": [
         "serve"
-      ]
+      ],
+      "env": {
+        "HAFT_PROJECT_ROOT": "/home/assistant/claude-telegram-bot"
+      }
     }
   }
 }

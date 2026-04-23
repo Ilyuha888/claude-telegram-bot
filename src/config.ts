@@ -6,6 +6,7 @@
 
 import { homedir } from "os";
 import { resolve, dirname } from "path";
+import { mkdir } from "fs/promises";
 import type { McpServerConfig } from "./types";
 
 // ============== Environment Setup ==============
@@ -44,6 +45,10 @@ export const ALLOWED_USERS: number[] = (
 
 export const WORKING_DIR = process.env.CLAUDE_WORKING_DIR || HOME;
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+
+// Mode-2 base paths — defined early so they can be included in ALLOWED_PATHS
+export const REPOS_DIR = process.env.REPOS_DIR || `${HOME}/repos`;
+export const BOT_DATA_DIR = process.env.BOT_DATA_DIR || `${HOME}/bot-data`;
 
 // ============== Claude CLI Path ==============
 
@@ -92,6 +97,8 @@ const defaultAllowedPaths = [
   `${HOME}/Downloads`,
   `${HOME}/Desktop`,
   `${HOME}/.claude`, // Claude Code data (plans, settings)
+  REPOS_DIR,         // repos for Mode-2 /work sessions
+  BOT_DATA_DIR,      // sessions.json and bot runtime data
 ];
 
 const allowedPathsStr = process.env.ALLOWED_PATHS || "";
@@ -231,6 +238,24 @@ export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
 // Ensure temp directory exists
 try { await Bun.write(`${TEMP_DIR}/.keep`, ""); } catch { /* non-fatal: temp dir may be root-owned */ }
+
+// ============== Mode-2 Configuration ==============
+
+export const SESSIONS_FILE = `${BOT_DATA_DIR}/sessions.json`;
+export const REAPER_INTERVAL_MS = parseInt(process.env.REAPER_INTERVAL_MS || "3600000", 10);
+export const REAPER_IDLE_THRESHOLD_MS = parseInt(
+  process.env.REAPER_IDLE_THRESHOLD_MS || String(7 * 24 * 60 * 60 * 1000),
+  10
+);
+
+// Ensure bot-data directory exists and is writable
+try {
+  await mkdir(BOT_DATA_DIR, { recursive: true });
+  await Bun.write(`${BOT_DATA_DIR}/.keep`, "");
+} catch (e) {
+  console.error(`ERROR: BOT_DATA_DIR ${BOT_DATA_DIR} is not writable: ${e}`);
+  process.exit(1);
+}
 
 // ============== Validation ==============
 

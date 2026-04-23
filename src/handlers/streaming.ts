@@ -283,7 +283,23 @@ export function createStatusCallback(
           state.lastEditTimes.set(segmentId, now);
         }
       } else if (statusType === "segment_end" && segmentId !== undefined) {
-        if (state.textMessages.has(segmentId) && content) {
+        if (content && !state.textMessages.has(segmentId)) {
+          // Short response: never triggered the >20 char streaming guard — send now
+          const formatted = convertMarkdownToHtml(content);
+          try {
+            const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
+            state.textMessages.set(segmentId, msg);
+            state.lastContent.set(segmentId, formatted);
+          } catch {
+            try {
+              const msg = await ctx.reply(content);
+              state.textMessages.set(segmentId, msg);
+              state.lastContent.set(segmentId, content);
+            } catch (plainError) {
+              console.debug("Failed to send short response:", plainError);
+            }
+          }
+        } else if (state.textMessages.has(segmentId) && content) {
           const msg = state.textMessages.get(segmentId)!;
           const formatted = convertMarkdownToHtml(content);
 
