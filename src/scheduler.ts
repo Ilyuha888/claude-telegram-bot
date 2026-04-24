@@ -196,6 +196,9 @@ async function seedDefaults(): Promise<void> {
   }
 }
 
+// setTimeout silently overflows at 2^31-1 ms (~24.8 days) and fires immediately.
+const MAX_TIMEOUT_MS = 2_000_000_000; // ~23.1 days — safely under the limit
+
 function registerOneShot(schedule: Schedule): void {
   if (registeredOneShotIds.has(schedule.id)) return;
   registeredOneShotIds.add(schedule.id);
@@ -204,6 +207,16 @@ function registerOneShot(schedule: Schedule): void {
     ? new Date(schedule.last_fired).getTime()
     : Date.now();
   const delayMs = Math.max(0, fireAt - Date.now());
+
+  if (delayMs > MAX_TIMEOUT_MS) {
+    // Too far out — wait MAX_TIMEOUT_MS then re-register with a fresh delay
+    const timer = setTimeout(() => {
+      registeredOneShotIds.delete(schedule.id);
+      registerOneShot(schedule);
+    }, MAX_TIMEOUT_MS);
+    oneShotTimers.push(timer);
+    return;
+  }
 
   const timer = setTimeout(() => {
     fireReminder(schedule).catch((err) =>
