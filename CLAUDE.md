@@ -13,7 +13,7 @@ bun install        # Install dependencies
 
 ## Architecture
 
-This is a Telegram bot (~3,300 lines TypeScript) that lets you control Claude Code from your phone via text, voice, photos, and documents. Built with Bun and grammY.
+This is a Telegram bot (~4,200 lines TypeScript) that lets you control Claude Code from your phone via text, voice, photos, and documents. Built with Bun and grammY.
 
 ### Message Flow
 
@@ -30,6 +30,16 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 - **`src/formatting.ts`** - Markdown→HTML conversion for Telegram, tool status emoji formatting
 - **`src/utils.ts`** - Audit logging, voice transcription (OpenAI), typing indicators
 - **`src/types.ts`** - Shared TypeScript types
+- **`src/scheduler.ts`** - In-process node-cron scheduler: fire loop, dialogue-interrupt gate (waits ≤60s if session active), boot catch-up, soft Telegram delivery with notification keyboard
+- **`src/scheduler-prompts.ts`** - Source-controlled prompt bodies for the 4 V_rich routines (daily focus, weekly curator, monthly audit, quarterly review)
+
+### Mode-2 modules (`src/mode2/`)
+
+- **`store.ts`** - Atomic JSON store for RC work sessions (write-tmp-rename, enqueue serialization)
+- **`schedules-store.ts`** - Atomic JSON store for schedules (`bot-data/schedules.json`), tracks `last_fired`
+- **`notifications-store.ts`** - Atomic JSON store for fired notifications (`bot-data/notifications.json`), 200-row cap
+- **`reaper.ts`** - Idle session reaper + `resumeOnBoot` catch-up logic
+- **`types.ts`** - Shared types: `WorkSession`, `Schedule`, `Notification`
 
 ### Handlers (`src/handlers/`)
 
@@ -41,8 +51,10 @@ Each message type has a dedicated async handler:
 - **`photo.ts`** - Image analysis with media group buffering (1s timeout for albums)
 - **`document.ts`** - PDF extraction (pdftotext CLI), text files, archives, routes audio files to `audio.ts`
 - **`video.ts`** - Video messages and video notes
-- **`callback.ts`** - Inline keyboard button handling for ask_user MCP
+- **`callback.ts`** - Inline keyboard button handling; prefix dispatch: `resume:`, `permask:`, `notif:`, `m2:`, `menu:`, `askq:`, `askuser:`
 - **`streaming.ts`** - Shared `StreamingState` and status callback factory
+- **`mode2/menu.ts`** - `/menu` inline keyboard controller; all `m2:` callbacks handled here
+- **`mode2/notifications.ts`** - Notification callbacks (`notif:show/new/del/remind/tab`); Scheduled and Fired tab renderers
 
 ### Security Layers
 
@@ -68,6 +80,8 @@ MCP servers defined in `mcp-config.ts`.
 - `/tmp/claude-telegram-session.json` - Session persistence for `/resume`
 - `/tmp/telegram-bot/` - Downloaded photos/documents
 - `/tmp/claude-telegram-audit.log` - Audit log
+- `bot-data/schedules.json` - Scheduler registry: cron expressions, `last_fired`, one-shot remind entries
+- `bot-data/notifications.json` - Delivered notification history (content, status, Telegram message metadata)
 
 ## Patterns
 
@@ -79,7 +93,9 @@ MCP servers defined in `mcp-config.ts`.
 
 **Type checking**: Run `bun run typecheck` periodically while editing TypeScript files. Fix any type errors before committing.
 
-**After code changes**: Restart the bot so changes can be tested. Use `launchctl kickstart -k gui/$(id -u)/com.claude-telegram-ts` if running as a service, or `bun run start` for manual runs.
+**After code changes**: Restart the bot so changes can be tested. On Linux with systemd: `sudo systemctl restart claude-telegram-bot`. For manual runs: `bun run start`. The scheduler re-registers all cron handles on startup and fires any stale catch-up tasks automatically.
+
+**Scheduler invariants**: Ephemeral Claude sessions spawned by the scheduler MUST NOT write to `SESSION_FILE` (enforced via `ClaudeSession({ persist: false })`). The scheduler polls `session.isRunning` for ≤60s before firing to avoid interrupting active dialogue.
 
 ## Attachment persistence contract
 
@@ -139,6 +155,18 @@ launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 tail -f /tmp/claude-telegram-bot-ts.log
 tail -f /tmp/claude-telegram-bot-ts.err
 ```
+
+## PKM Skills
+
+Three Claude Code skills for Obsidian vault operations, invocable via Telegram slash commands:
+
+| Skill | Invoke | What it does |
+|-------|--------|--------------|
+| **Scribe** | `/scribe` or `/scribe <text>` | Captures input → `User_Obsidian_Vault/00-inbox/` with correct frontmatter, duplicate check, attachment wikilinks, commit-confirm |
+| **Retriever** | `/retriever what do I know about X` | Vault-grounded answer with note citations; scope statement when answer is partial; no hallucination |
+| **Curator** | `/curator` | Stale inbox, draft promotions, orphan candidates, MOC gaps — read-only, ≤1500 chars for Telegram |
+
+Skill files live in `~/.claude/skills/` on the VM. The weekly curator also runs automatically every Sunday 20:00 MSK via the scheduler (`prompt_key: weekly_curator` in `schedules.json`).
 
 ## Governance
 
