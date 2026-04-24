@@ -211,55 +211,33 @@ function formatWithinLimit(
   return formatted;
 }
 
-// HTML tags that can be left unclosed if we split mid-content
-const CLOSEABLE_TAGS = ["tg-spoiler", "pre", "blockquote", "b", "i", "code"];
+// Conservative markdown chunk limit — HTML conversion adds tag overhead
+const MARKDOWN_CHUNK_LIMIT = 3500;
 
 /**
- * Split HTML at a safe boundary before `limit` chars.
- * Prefers double-newline, then single newline, then a hard cut with tag fix-up.
- */
-function splitAtBoundary(html: string, limit: number): [string, string] {
-  // Prefer paragraph break
-  const atPara = html.lastIndexOf("\n\n", limit);
-  if (atPara > 0) return [html.slice(0, atPara), html.slice(atPara).trimStart()];
-
-  // Fall back to line break
-  const atLine = html.lastIndexOf("\n", limit);
-  if (atLine > 0) return [html.slice(0, atLine), html.slice(atLine).trimStart()];
-
-  // Hard cut — close any open tags at the boundary and reopen in the next chunk
-  const head = html.slice(0, limit);
-  const tail = html.slice(limit);
-  const openTags: string[] = [];
-  for (const tag of CLOSEABLE_TAGS) {
-    const opens = (head.match(new RegExp(`<${tag}[^>]*>`, "gi")) ?? []).length;
-    const closes = (head.match(new RegExp(`</${tag}>`, "gi")) ?? []).length;
-    for (let i = 0; i < opens - closes; i++) openTags.push(tag);
-  }
-  const closers = [...openTags].reverse().map((t) => `</${t}>`).join("");
-  const openers = openTags.map((t) => `<${t}>`).join("");
-  return [head + closers, openers + tail];
-}
-
-/**
- * Split long formatted HTML into chunks and send as separate messages.
+ * Split raw markdown at paragraph/line boundaries then convert each chunk to
+ * HTML. Splitting before conversion guarantees no HTML tag can span a boundary.
  */
 async function sendChunkedMessages(
   ctx: Context,
-  content: string
+  rawContent: string,
 ): Promise<void> {
   const chunks: string[] = [];
-  let remaining = content;
-  while (remaining.length > TELEGRAM_SAFE_LIMIT) {
-    const [chunk, rest] = splitAtBoundary(remaining, TELEGRAM_SAFE_LIMIT);
-    chunks.push(chunk);
-    remaining = rest;
+  let remaining = rawContent;
+
+  while (remaining.length > MARKDOWN_CHUNK_LIMIT) {
+    let splitAt = remaining.lastIndexOf("\n\n", MARKDOWN_CHUNK_LIMIT);
+    if (splitAt <= 0) splitAt = remaining.lastIndexOf("\n", MARKDOWN_CHUNK_LIMIT);
+    if (splitAt <= 0) splitAt = MARKDOWN_CHUNK_LIMIT;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).trimStart();
   }
   if (remaining.length > 0) chunks.push(remaining);
 
   for (const chunk of chunks) {
+    const formatted = convertMarkdownToHtml(chunk);
     try {
-      await ctx.reply(chunk, { parse_mode: "HTML" });
+      await ctx.reply(formatted, { parse_mode: "HTML" });
     } catch {
       try {
         await ctx.reply(chunk);
@@ -396,7 +374,7 @@ export function createStatusCallback(
                 } catch (delError) {
                   console.debug("Failed to delete for chunking:", delError);
                 }
-                await sendChunkedMessages(ctx, formatted);
+                await sendChunkedMessages(ctx, content);
               } else {
                 console.debug("Failed to edit final message:", error);
               }
@@ -408,7 +386,7 @@ export function createStatusCallback(
             } catch (error) {
               console.debug("Failed to delete message for splitting:", error);
             }
-            await sendChunkedMessages(ctx, formatted);
+            await sendChunkedMessages(ctx, content);
           }
         }
       } else if (statusType === "done") {
