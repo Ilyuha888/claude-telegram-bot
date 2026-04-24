@@ -25,11 +25,11 @@ function checkAuth(ctx: Context): boolean {
 // ── Keyboards ────────────────────────────────────────────────────────────────
 
 function mainMenuKeyboard(unread = 0): InlineKeyboard {
-  const notifLabel = unread > 0 ? `📬 Notifications (${unread})` : "📬 Notifications";
+  const notifLabel = unread > 0 ? `📬 Notifications  (${unread})` : "📬 Notifications";
   return new InlineKeyboard()
-    .text("🗂 Work",     "m2:work").row()
-    .text("📋 Sessions", "m2:sessions").row()
-    .text(notifLabel,    "m2:notifications");
+    .text("🗂  Work",      "m2:work").row()
+    .text("📋  Sessions",  "m2:sessions").row()
+    .text(notifLabel,      "m2:notifications");
 }
 
 function repoKeyboard(repos: string[]): InlineKeyboard {
@@ -62,7 +62,7 @@ function sessionDetailKeyboard(slug: string): InlineKeyboard {
 export async function handleMenu(ctx: Context): Promise<void> {
   if (!checkAuth(ctx)) { await ctx.reply("Unauthorized"); return; }
   const unread = await notifStore.unreadCount();
-  await ctx.reply("Ops", { reply_markup: mainMenuKeyboard(unread) });
+  await ctx.reply("Personal assistant  ·  menu", { reply_markup: mainMenuKeyboard(unread) });
 }
 
 // ── Callback router ───────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ export async function handleMode2Callback(ctx: Context, action: string): Promise
 
   if (action === "menu") {
     const unread = await notifStore.unreadCount();
-    await edit(ctx, "Ops", mainMenuKeyboard(unread));
+    await edit(ctx, "Personal assistant  ·  menu", mainMenuKeyboard(unread));
     return;
   }
 

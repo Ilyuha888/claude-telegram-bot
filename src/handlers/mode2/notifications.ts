@@ -1,7 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import { session } from "../../session";
-import { escapeHtml } from "../../formatting";
+import { escapeHtml, convertMarkdownToHtml } from "../../formatting";
 import * as notifStore from "../../mode2/notifications-store";
 import * as schedulesStore from "../../mode2/schedules-store";
 import type { Schedule } from "../../mode2/types";
@@ -60,22 +60,24 @@ async function handleShow(ctx: Context, notifId: string): Promise<void> {
     ? notif.content.slice(0, 3800) + "…"
     : notif.content;
 
+  const body = convertMarkdownToHtml(truncated);
+  const keyboard = new InlineKeyboard()
+    .text("New session", `notif:new:${notifId}`)
+    .text("Delete", `notif:del:${notifId}`)
+    .row()
+    .text("Remind later", `notif:remind:${notifId}`)
+    .row()
+    .text("‹ Back", "m2:notifications");
+
   try {
     await ctx.editMessageText(
-      `📬 <b>${escapeHtml(notif.title)}</b>\n\n${escapeHtml(truncated)}`,
-      {
-        parse_mode: "HTML",
-        reply_markup: new InlineKeyboard()
-          .text("New session", `notif:new:${notifId}`)
-          .text("Delete", `notif:del:${notifId}`)
-          .row()
-          .text("Remind later", `notif:remind:${notifId}`),
-      },
+      `📬 <b>${escapeHtml(notif.title)}</b>\n\n${body}`,
+      { parse_mode: "HTML", reply_markup: keyboard },
     );
   } catch {
     await ctx.reply(
-      `📬 <b>${escapeHtml(notif.title)}</b>\n\n${escapeHtml(truncated)}`,
-      { parse_mode: "HTML" },
+      `📬 <b>${escapeHtml(notif.title)}</b>\n\n${body}`,
+      { parse_mode: "HTML", reply_markup: keyboard },
     );
   }
 }
