@@ -135,11 +135,16 @@ async function fireReminder(schedule: Schedule): Promise<void> {
       status: "unread",
     };
     await notifStore.append(newNotif);
+    const reminderKeyboard = new InlineKeyboard()
+      .text("Log outcome", `notif:new:${newNotif.id}`)
+      .text("Delete", `notif:del:${newNotif.id}`)
+      .row()
+      .text("Remind later", `notif:remind:${newNotif.id}`);
     try {
       const msg = await botInstance.api.sendMessage(
         chatId,
         `⏰ <b>Reminder</b> · ${escapeHtml(newNotif.title)}`,
-        { parse_mode: "HTML", reply_markup: notificationKeyboard(newNotif.id) },
+        { parse_mode: "HTML", reply_markup: reminderKeyboard },
       );
       await notifStore.patchMessageMeta(newNotif.id, msg.message_id, chatId);
     } catch (err) {
