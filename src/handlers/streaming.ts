@@ -211,20 +211,56 @@ function formatWithinLimit(
   return formatted;
 }
 
+// HTML tags that can be left unclosed if we split mid-content
+const CLOSEABLE_TAGS = ["tg-spoiler", "pre", "blockquote", "b", "i", "code"];
+
 /**
- * Split long formatted content into chunks and send as separate messages.
+ * Split HTML at a safe boundary before `limit` chars.
+ * Prefers double-newline, then single newline, then a hard cut with tag fix-up.
+ */
+function splitAtBoundary(html: string, limit: number): [string, string] {
+  // Prefer paragraph break
+  const atPara = html.lastIndexOf("\n\n", limit);
+  if (atPara > 0) return [html.slice(0, atPara), html.slice(atPara).trimStart()];
+
+  // Fall back to line break
+  const atLine = html.lastIndexOf("\n", limit);
+  if (atLine > 0) return [html.slice(0, atLine), html.slice(atLine).trimStart()];
+
+  // Hard cut — close any open tags at the boundary and reopen in the next chunk
+  const head = html.slice(0, limit);
+  const tail = html.slice(limit);
+  const openTags: string[] = [];
+  for (const tag of CLOSEABLE_TAGS) {
+    const opens = (head.match(new RegExp(`<${tag}[^>]*>`, "gi")) ?? []).length;
+    const closes = (head.match(new RegExp(`</${tag}>`, "gi")) ?? []).length;
+    for (let i = 0; i < opens - closes; i++) openTags.push(tag);
+  }
+  const closers = [...openTags].reverse().map((t) => `</${t}>`).join("");
+  const openers = openTags.map((t) => `<${t}>`).join("");
+  return [head + closers, openers + tail];
+}
+
+/**
+ * Split long formatted HTML into chunks and send as separate messages.
  */
 async function sendChunkedMessages(
   ctx: Context,
   content: string
 ): Promise<void> {
-  // Split on markdown content first, then format each chunk
-  for (let i = 0; i < content.length; i += TELEGRAM_SAFE_LIMIT) {
-    const chunk = content.slice(i, i + TELEGRAM_SAFE_LIMIT);
+  const chunks: string[] = [];
+  let remaining = content;
+  while (remaining.length > TELEGRAM_SAFE_LIMIT) {
+    const [chunk, rest] = splitAtBoundary(remaining, TELEGRAM_SAFE_LIMIT);
+    chunks.push(chunk);
+    remaining = rest;
+  }
+  if (remaining.length > 0) chunks.push(remaining);
+
+  for (const chunk of chunks) {
     try {
       await ctx.reply(chunk, { parse_mode: "HTML" });
     } catch {
-      // HTML failed (possibly broken tags from split) - try plain text
       try {
         await ctx.reply(chunk);
       } catch (plainError) {
