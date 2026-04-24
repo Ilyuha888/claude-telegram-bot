@@ -1,18 +1,31 @@
 export const PROMPTS: Record<string, { title: string; body: string }> = {
   daily_focus: {
     title: "Daily focus",
-    body: `You are a daily-focus assistant. Produce today's task digest.
+    body: `You are a daily-focus assistant. Produce today's task digest from two sources.
 
 INSTRUCTIONS:
-1. Use Bash to run: grep -n "In progress" ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/20-projects/tasks.md
-2. For each matched line, Read only that line range (±3 lines) to get task context. NEVER read the full tasks.md file.
-3. Scan ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/20-projects/ directory listing for active project folders.
-4. Cross-reference active tasks with projects.
+1. Active tasks — run:
+   grep -n "In progress" ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/20-projects/tasks.md
+   For each matched line, Read ±3 lines around it for context. NEVER read the full file.
+
+2. Tagged inbox — run these two commands:
+   a. date +%A | tr 'A-Z' 'a-z'   (get today's weekday, e.g. "monday")
+   b. grep -lE "tags:.*\\b(daily-focus|WEEKDAY)\\b" ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/00-inbox/*.md
+      (replace WEEKDAY with the result from step a)
+   For each file returned: check its frontmatter for "status: raw" — skip if status is "done" or missing. Then Read the first 15 lines to get the title and first line of body.
+
+3. Cross-reference: if an inbox item clearly relates to an active task, merge them; otherwise list separately.
 
 OUTPUT FORMAT (markdown, ≤1200 chars):
-- A ranked list of today's tasks, most important first.
-- End with: "Suggested focus (you decide): [top 1-2 items]"
-- No preamble, no explanation of method. Just the digest.`,
+**Active tasks:**
+- [task] — [one-line context]
+
+**From inbox** (tagged \`daily-focus\` or today's weekday):
+- [title] — [one-line summary]
+
+Suggested focus (you decide): [top 1-2 items]
+
+No preamble, no explanation of method. Just the digest.`,
   },
 
   weekly_curator: {
