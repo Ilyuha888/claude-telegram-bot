@@ -8,6 +8,8 @@ import type { Schedule } from "../../mode2/types";
 import { StreamingState, createStatusCallback } from "../streaming";
 import { startTypingIndicator } from "../../utils";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function notificationKeyboard(notifId: string): InlineKeyboard {
   return new InlineKeyboard()
     .text("Show", `notif:show:${notifId}`)
@@ -17,34 +19,157 @@ function notificationKeyboard(notifId: string): InlineKeyboard {
     .text("Remind later", `notif:remind:${notifId}`);
 }
 
+function relativeTime(isoOrNull: string | null): string {
+  if (!isoOrNull) return "never";
+  const mins = Math.floor((Date.now() - new Date(isoOrNull).getTime()) / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60 * 24) return `${Math.floor(mins / 60)}h ago`;
+  return `${Math.floor(mins / (60 * 24))}d ago`;
+}
+
+const SCHEDULE_LABELS: Record<string, string> = {
+  "daily-focus":      "Daily · 09:00 MSK",
+  "weekly-curator":   "Every Sunday · 20:00 MSK",
+  "monthly-audit":    "1st of month · 10:00 MSK",
+  "quarterly-review": "Quarterly · 10:00 MSK",
+};
+
+const SCHEDULE_TITLES: Record<string, string> = {
+  "daily-focus":      "Daily focus",
+  "weekly-curator":   "Weekly curator",
+  "monthly-audit":    "Monthly audit",
+  "quarterly-review": "Quarterly review",
+};
+
+async function editOrReply(
+  ctx: Context,
+  text: string,
+  kb: InlineKeyboard,
+  html = true,
+): Promise<void> {
+  const opts = { reply_markup: kb, ...(html ? { parse_mode: "HTML" as const } : {}) };
+  try {
+    await ctx.editMessageText(text, opts);
+  } catch {
+    await ctx.reply(text, opts);
+  }
+}
+
+// ── Callback router ───────────────────────────────────────────────────────────
+
 export async function handleNotificationCallback(ctx: Context): Promise<void> {
   const data = ctx.callbackQuery?.data;
   if (!data) return;
 
   const parts = data.split(":");
   const action = parts[1];
-  const notifId = parts[2];
+  const arg = parts[2];  // notif id for show/new/del/remind; "fired"|"scheduled" for tab
 
-  if (!action || !notifId) {
+  if (!action) {
     await ctx.answerCallbackQuery({ text: "Invalid notification callback" });
     return;
   }
 
   switch (action) {
-    case "show":
-      return handleShow(ctx, notifId);
-    case "new":
-      return handleNewSession(ctx, notifId);
-    case "del":
-      return handleDelete(ctx, notifId);
-    case "remind":
-      return handleRemindLater(ctx, notifId);
+    case "show":   if (arg) return handleShow(ctx, arg); break;
+    case "new":    if (arg) return handleNewSession(ctx, arg); break;
+    case "del":    if (arg) return handleDelete(ctx, arg); break;
+    case "remind": if (arg) return handleRemindLater(ctx, arg); break;
     case "tab":
-      return renderNotificationsTab(ctx);
+      if (arg === "fired") return renderFiredTab(ctx);
+      return renderScheduledTab(ctx);
     default:
       await ctx.answerCallbackQuery({ text: "Unknown action" });
   }
 }
+
+// ── Scheduled tab (planned routines) ─────────────────────────────────────────
+
+async function renderScheduledTab(ctx: Context): Promise<void> {
+  await ctx.answerCallbackQuery().catch(() => {});
+
+  const all = await schedulesStore.list();
+  const routines = all.filter((s) => !s.one_shot);
+  const reminders = all.filter((s) => s.one_shot);
+
+  const lines: string[] = [];
+  for (const s of routines) {
+    const title = SCHEDULE_TITLES[s.id] ?? s.prompt_key;
+    const label = SCHEDULE_LABELS[s.id] ?? s.cron;
+    lines.push(`<b>${escapeHtml(title)}</b>  <i>${escapeHtml(label)}</i>\n   last: ${relativeTime(s.last_fired)}`);
+  }
+
+  if (reminders.length > 0) {
+    lines.push(`\n🔔 <b>Pending reminders</b>`);
+    for (const r of reminders) {
+      const fireAt = r.last_fired ? new Date(r.last_fired) : null;
+      const inMs = fireAt ? fireAt.getTime() - Date.now() : 0;
+      const inMin = Math.max(0, Math.round(inMs / 60_000));
+      lines.push(`   fires in ~${inMin}m`);
+    }
+  }
+
+  const firedCount = (await notifStore.list()).length;
+  const firedLabel = firedCount > 0 ? `📬 Fired  (${firedCount})` : "📬 Fired";
+
+  const kb = new InlineKeyboard()
+    .text(firedLabel, "notif:tab:fired").row()
+    .text("‹ Menu", "m2:menu");
+
+  await editOrReply(
+    ctx,
+    `📅 <b>Scheduled routines</b>\n\n${lines.join("\n\n")}`,
+    kb,
+  );
+}
+
+// ── Fired tab (delivered notifications) ──────────────────────────────────────
+
+async function renderFiredTab(ctx: Context): Promise<void> {
+  await ctx.answerCallbackQuery().catch(() => {});
+
+  const all = await notifStore.list();
+  const recent = all.slice(0, 10);
+
+  if (recent.length === 0) {
+    await editOrReply(
+      ctx,
+      "No fired notifications yet.",
+      new InlineKeyboard()
+        .text("📅 Scheduled", "notif:tab:scheduled").row()
+        .text("‹ Menu", "m2:menu"),
+    );
+    return;
+  }
+
+  const lines = recent.map((n) => {
+    const icon = n.status === "unread" ? "●" : "○";
+    return `${icon} <b>${escapeHtml(n.title)}</b> — ${relativeTime(n.fired_at)}`;
+  });
+
+  const kb = new InlineKeyboard();
+  for (const n of recent) {
+    kb.text(
+      `${n.status === "unread" ? "● " : ""}${n.title.slice(0, 28)}`,
+      `notif:show:${n.id}`,
+    ).row();
+  }
+  kb.text("📅 Scheduled", "notif:tab:scheduled").text("‹ Menu", "m2:menu");
+
+  await editOrReply(
+    ctx,
+    `📬 <b>Fired notifications</b>\n\n${lines.join("\n")}`,
+    kb,
+  );
+}
+
+// ── Entry point (called from /menu) ──────────────────────────────────────────
+
+export async function renderNotificationsTab(ctx: Context): Promise<void> {
+  return renderScheduledTab(ctx);
+}
+
+// ── Individual notification actions ──────────────────────────────────────────
 
 async function handleShow(ctx: Context, notifId: string): Promise<void> {
   const notif = await notifStore.get(notifId);
@@ -67,19 +192,13 @@ async function handleShow(ctx: Context, notifId: string): Promise<void> {
     .row()
     .text("Remind later", `notif:remind:${notifId}`)
     .row()
-    .text("‹ Back", "m2:notifications");
+    .text("‹ Back", "notif:tab:fired");
 
-  try {
-    await ctx.editMessageText(
-      `📬 <b>${escapeHtml(notif.title)}</b>\n\n${body}`,
-      { parse_mode: "HTML", reply_markup: keyboard },
-    );
-  } catch {
-    await ctx.reply(
-      `📬 <b>${escapeHtml(notif.title)}</b>\n\n${body}`,
-      { parse_mode: "HTML", reply_markup: keyboard },
-    );
-  }
+  await editOrReply(
+    ctx,
+    `📬 <b>${escapeHtml(notif.title)}</b>\n\n${body}`,
+    keyboard,
+  );
 }
 
 async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
@@ -166,46 +285,4 @@ async function handleRemindLater(ctx: Context, notifId: string): Promise<void> {
       { parse_mode: "HTML", reply_markup: new InlineKeyboard() },
     );
   } catch { /* non-critical */ }
-}
-
-export async function renderNotificationsTab(ctx: Context): Promise<void> {
-  const all = await notifStore.list();
-  const recent = all.slice(0, 10);
-
-  if (recent.length === 0) {
-    try {
-      await ctx.editMessageText("No notifications.", {
-        reply_markup: new InlineKeyboard().text("‹ Back", "m2:menu"),
-      });
-    } catch {
-      await ctx.reply("No notifications.", {
-        reply_markup: new InlineKeyboard().text("‹ Back", "m2:menu"),
-      });
-    }
-    return;
-  }
-
-  const lines = recent.map((n) => {
-    const icon = n.status === "unread" ? "●" : "○";
-    const age = Math.floor((Date.now() - new Date(n.fired_at).getTime()) / 60_000);
-    const ageStr = age < 60 ? `${age}m` : `${Math.floor(age / 60)}h`;
-    return `${icon} <b>${escapeHtml(n.title)}</b> — ${ageStr} ago`;
-  });
-
-  const kb = new InlineKeyboard();
-  for (const n of recent) {
-    kb.text(
-      `${n.status === "unread" ? "● " : ""}${n.title.slice(0, 25)}`,
-      `notif:show:${n.id}`,
-    ).row();
-  }
-  kb.text("‹ Back", "m2:menu");
-
-  const text = `<b>Notifications</b>\n\n${lines.join("\n")}`;
-
-  try {
-    await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
-  } catch {
-    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
-  }
 }
