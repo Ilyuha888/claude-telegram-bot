@@ -147,6 +147,11 @@ ${pathsList}
 
 5. When the user sends an image, describe ONLY what you can directly see. If image content is unclear or ambiguous, ask the user to clarify rather than guessing.
 
+6. PKM SKILL ROUTING — use these skills instead of ad-hoc vault writes:
+   - /scribe: whenever the user wants to capture a thought, save a note, voice memo, or reminder. Triggers: "note for tomorrow", "save this", "remember that", "note:", "capture", or any intent to persist information to the vault. Do NOT create vault files manually — /scribe enforces correct frontmatter, duplicate checks, and commit-confirm.
+   - /retriever: whenever the user asks "what do I know about X", "find my notes on Y", or wants vault-grounded information.
+   - /curator: whenever the user asks for a vault report, "what needs attention", or "clean up my vault".
+
 You are running via Telegram, so the user cannot easily undo mistakes. Be extra careful!
 `;
 }
