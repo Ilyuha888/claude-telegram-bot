@@ -1,10 +1,12 @@
 import cron, { type ScheduledTask } from "node-cron";
+import { watch, type FSWatcher } from "fs";
 import type { Bot } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { ClaudeSession } from "./session";
 import { session as mainSession } from "./session";
 import { PROMPTS } from "./scheduler-prompts";
-import { ALLOWED_USERS } from "./config";
+import { ALLOWED_USERS, SCHEDULES_FILE } from "./config";
+import { escapeHtml } from "./formatting";
 import * as schedulesStore from "./mode2/schedules-store";
 import * as notifStore from "./mode2/notifications-store";
 import type { Schedule, Notification } from "./mode2/types";
@@ -25,6 +27,8 @@ const CADENCE_WINDOWS_MS: Record<string, number> = {
 
 const cronHandles: ScheduledTask[] = [];
 const oneShotTimers: ReturnType<typeof setTimeout>[] = [];
+const registeredOneShotIds = new Set<string>();
+let fileWatcher: FSWatcher | null = null;
 let botInstance: Bot | null = null;
 
 function noopStatusCallback(): Promise<void> {
@@ -111,18 +115,48 @@ async function fire(schedule: Schedule): Promise<void> {
 }
 
 async function fireReminder(schedule: Schedule): Promise<void> {
+  registeredOneShotIds.delete(schedule.id);
+  await schedulesStore.remove(schedule.id);
+
+  if (!botInstance) return;
+  const chatId = ALLOWED_USERS[0];
+  if (!chatId) return;
+
+  // Scribe-created reminder — direct alert with note context
+  if (schedule.payload?.reminder_message) {
+    const newNotif: Notification = {
+      id: crypto.randomUUID(),
+      fired_at: new Date().toISOString(),
+      prompt_key: "scribe_reminder",
+      title: schedule.payload.reminder_message,
+      content: schedule.payload.note_path
+        ? `Reminder: ${schedule.payload.reminder_message}\n\nNote: ${schedule.payload.note_path}`
+        : `Reminder: ${schedule.payload.reminder_message}`,
+      status: "unread",
+    };
+    await notifStore.append(newNotif);
+    try {
+      const msg = await botInstance.api.sendMessage(
+        chatId,
+        `⏰ <b>Reminder</b> · ${escapeHtml(newNotif.title)}`,
+        { parse_mode: "HTML", reply_markup: notificationKeyboard(newNotif.id) },
+      );
+      await notifStore.patchMessageMeta(newNotif.id, msg.message_id, chatId);
+    } catch (err) {
+      console.error(`[scheduler] scribe reminder send failed:`, err);
+    }
+    return;
+  }
+
+  // [Remind later] — re-surface an existing notification
   const notifId = schedule.payload?.notification_id;
   if (!notifId) {
-    console.error(`[scheduler] remind schedule ${schedule.id} missing notification_id`);
-    await schedulesStore.remove(schedule.id);
+    console.error(`[scheduler] remind schedule ${schedule.id} missing payload`);
     return;
   }
 
   const original = await notifStore.get(notifId);
-  if (!original || original.status === "deleted") {
-    await schedulesStore.remove(schedule.id);
-    return;
-  }
+  if (!original || original.status === "deleted") return;
 
   const newNotif: Notification = {
     id: crypto.randomUUID(),
@@ -133,20 +167,12 @@ async function fireReminder(schedule: Schedule): Promise<void> {
     status: "unread",
   };
   await notifStore.append(newNotif);
-  await schedulesStore.remove(schedule.id);
-
-  if (!botInstance) return;
-  const chatId = ALLOWED_USERS[0];
-  if (!chatId) return;
 
   try {
     const msg = await botInstance.api.sendMessage(
       chatId,
-      `🔔 <b>Reminder</b> · ${newNotif.title}`,
-      {
-        parse_mode: "HTML",
-        reply_markup: notificationKeyboard(newNotif.id),
-      },
+      `🔔 <b>Reminder</b> · ${escapeHtml(newNotif.title)}`,
+      { parse_mode: "HTML", reply_markup: notificationKeyboard(newNotif.id) },
     );
     await notifStore.patchMessageMeta(newNotif.id, msg.message_id, chatId);
   } catch (err) {
@@ -166,7 +192,9 @@ async function seedDefaults(): Promise<void> {
 }
 
 function registerOneShot(schedule: Schedule): void {
-  if (!schedule.payload?.notification_id) return;
+  if (registeredOneShotIds.has(schedule.id)) return;
+  registeredOneShotIds.add(schedule.id);
+
   const fireAt = schedule.last_fired
     ? new Date(schedule.last_fired).getTime()
     : Date.now();
@@ -178,6 +206,21 @@ function registerOneShot(schedule: Schedule): void {
     );
   }, delayMs);
   oneShotTimers.push(timer);
+}
+
+async function reloadOneShots(): Promise<void> {
+  const all = await schedulesStore.list();
+  for (const s of all) {
+    if (s.one_shot && !registeredOneShotIds.has(s.id)) {
+      registerOneShot(s);
+      console.log(`[scheduler] registered new one-shot ${s.id}`);
+    }
+  }
+}
+
+export async function scheduleOneShot(schedule: Schedule): Promise<void> {
+  await schedulesStore.upsert(schedule);
+  registerOneShot(schedule);
 }
 
 export async function startScheduler(bot: Bot): Promise<void> {
@@ -218,6 +261,13 @@ export async function startScheduler(bot: Bot): Promise<void> {
     cronHandles.push(task);
   }
 
+  // Watch for new one-shot entries written at runtime (e.g. by Scribe skill)
+  fileWatcher = watch(SCHEDULES_FILE, { persistent: false }, () => {
+    reloadOneShots().catch((err) =>
+      console.error("[scheduler] reloadOneShots error:", err),
+    );
+  });
+
   console.log(
     `[scheduler] started: ${schedules.length} schedule(s) registered, ${catchUpCount} catch-up fire(s)`,
   );
@@ -234,6 +284,11 @@ export async function stopScheduler(): Promise<void> {
   }
   oneShotTimers.length = 0;
 
+  if (fileWatcher) {
+    fileWatcher.close();
+    fileWatcher = null;
+  }
+  registeredOneShotIds.clear();
   botInstance = null;
   console.log("[scheduler] stopped");
 }

@@ -4,6 +4,7 @@ import { session } from "../../session";
 import { escapeHtml, convertMarkdownToHtml } from "../../formatting";
 import * as notifStore from "../../mode2/notifications-store";
 import * as schedulesStore from "../../mode2/schedules-store";
+import { scheduleOneShot } from "../../scheduler";
 import type { Schedule } from "../../mode2/types";
 import { StreamingState, createStatusCallback } from "../streaming";
 import { startTypingIndicator } from "../../utils";
@@ -283,7 +284,7 @@ async function handleRemindLater(ctx: Context, notifId: string): Promise<void> {
     one_shot: true,
     payload: { notification_id: notifId },
   };
-  await schedulesStore.upsert(schedule);
+  await scheduleOneShot(schedule);
 
   await ctx.answerCallbackQuery({ text: "Will remind in 1 hour" });
 

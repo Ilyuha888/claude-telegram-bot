@@ -32,7 +32,11 @@ export type Schedule = {
   prompt_key: string;
   last_fired: string | null;
   one_shot?: boolean;
-  payload?: { notification_id: string };
+  payload?: {
+    notification_id?: string;   // [Remind later] re-surfaces an existing notification
+    reminder_message?: string;  // Scribe-created reminder — direct Telegram alert
+    note_path?: string;         // absolute path to the vault note
+  };
 };
 
 export type SchedulesFile = {
