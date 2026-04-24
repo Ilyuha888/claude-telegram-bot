@@ -236,7 +236,7 @@ async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
   if (skillPrimer) {
     priming = skillPrimer;
   } else if (notif.prompt_key === "scribe_reminder") {
-    priming = `My reminder just fired: "${notif.title}"\n\nI've just done it (or I'm about to). What was the outcome? Tell me what happened and save it to my vault as a note.`;
+    priming = `My reminder just fired: "${notif.title}"\n\n${notif.content}\n\nI've done it. Read the note for context, then help me capture what I learned.`;
   } else {
     priming = `Here is a scheduled notification I received. Please help me act on it:\n\n---\n${notif.content}\n---\n\nWhat would you suggest?`;
   }
