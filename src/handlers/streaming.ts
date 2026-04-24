@@ -136,11 +136,15 @@ export async function checkPendingSendFileRequests(
         const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
         const inputFile = new InputFile(filePath);
 
-        if (VIDEO_EXTENSIONS.has(ext)) {
+        // Route by send_kind written by the server (honours send_as_document).
+        // Fall back to extension-based routing only when send_kind is absent.
+        if (sendKind === "document") {
+          await ctx.replyWithDocument(inputFile, { caption });
+        } else if (sendKind === "video" || VIDEO_EXTENSIONS.has(ext)) {
           await ctx.replyWithVideo(inputFile, { caption });
-        } else if (PHOTO_EXTENSIONS.has(ext)) {
+        } else if (sendKind === "photo" || PHOTO_EXTENSIONS.has(ext)) {
           await ctx.replyWithPhoto(inputFile, { caption });
-        } else if (AUDIO_EXTENSIONS.has(ext)) {
+        } else if (sendKind === "audio" || AUDIO_EXTENSIONS.has(ext)) {
           await ctx.replyWithAudio(inputFile, { caption });
         } else {
           await ctx.replyWithDocument(inputFile, { caption });

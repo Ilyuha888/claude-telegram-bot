@@ -141,7 +141,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "send_file",
       description:
-        "Send a file to the user via Telegram. Supports images (png, jpg, gif, webp), videos (mp4, mov, avi, webm, mkv), audio (mp3, wav, ogg, flac, m4a), and any other file type. By default, images are sent as photos (Telegram-compressed, 10MB limit). Set send_as_document=true to send any file — including images — as a document (original quality, no compression, 50MB limit). The path must be absolute and within ALLOWED_PATHS (or /tmp). Dotfile dirs (.git, .claude, .ssh) and secret filenames are refused. Fire-and-forget: you can continue generating after calling this tool.",
+        "Send a file to the user via Telegram. Supports images (png, jpg, gif, webp), videos (mp4, mov, avi, webm, mkv), audio (mp3, wav, ogg, flac, m4a), and any other file type. By default, images are sent as photos (Telegram-compressed, 10MB limit). Set send_as_document=true when the user asks to send a photo/image 'as a file', 'without compression', 'at full quality', or 'as a document' — this delivers it uncompressed with a 50MB limit instead. The path must be absolute and within ALLOWED_PATHS (or /tmp). Dotfile dirs (.git, .claude, .ssh) and secret filenames are refused. Fire-and-forget: you can continue generating after calling this tool.",
       inputSchema: {
         type: "object" as const,
         properties: {
