@@ -28,6 +28,31 @@ function relativeTime(isoOrNull: string | null): string {
   return `${Math.floor(mins / (60 * 24))}d ago`;
 }
 
+function fireTimeLabel(isoOrNull: string | null): string {
+  if (!isoOrNull) return "unknown";
+  const d = new Date(isoOrNull);
+  const now = new Date();
+  const msk = { timeZone: "Europe/Moscow" } as const;
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", ...msk });
+  const todayStr = now.toLocaleDateString("en-GB", msk);
+  const dStr = d.toLocaleDateString("en-GB", msk);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toLocaleDateString("en-GB", msk);
+  if (dStr === todayStr) return `today ${time}`;
+  if (dStr === tomorrowStr) return `tomorrow ${time}`;
+  return d.toLocaleDateString("en-GB", { month: "short", day: "numeric", ...msk }) + ` ${time}`;
+}
+
+async function reminderTitle(s: { prompt_key: string; payload?: { notification_id?: string; reminder_message?: string } }): Promise<string> {
+  if (s.payload?.reminder_message) return s.payload.reminder_message;
+  if (s.payload?.notification_id) {
+    const orig = await notifStore.get(s.payload.notification_id);
+    if (orig) return orig.title;
+  }
+  return s.prompt_key;
+}
+
 const SCHEDULE_LABELS: Record<string, string> = {
   "daily-focus":      "Daily · 09:00 MSK",
   "weekly-curator":   "Every Sunday · 20:00 MSK",
@@ -72,10 +97,11 @@ export async function handleNotificationCallback(ctx: Context): Promise<void> {
   }
 
   switch (action) {
-    case "show":   if (arg) return handleShow(ctx, arg); break;
-    case "new":    if (arg) return handleNewSession(ctx, arg); break;
-    case "del":    if (arg) return handleDelete(ctx, arg); break;
-    case "remind": if (arg) return handleRemindLater(ctx, arg); break;
+    case "show":      if (arg) return handleShow(ctx, arg); break;
+    case "new":       if (arg) return handleNewSession(ctx, arg); break;
+    case "del":       if (arg) return handleDelete(ctx, arg); break;
+    case "remind":    if (arg) return handleRemindLater(ctx, arg); break;
+    case "sched-del": if (arg) return handleSchedDel(ctx, arg); break;
     case "tab":
       if (arg === "fired") return renderFiredTab(ctx);
       return renderScheduledTab(ctx);
@@ -100,21 +126,21 @@ async function renderScheduledTab(ctx: Context): Promise<void> {
     lines.push(`<b>${escapeHtml(title)}</b>  <i>${escapeHtml(label)}</i>\n   last: ${relativeTime(s.last_fired)}`);
   }
 
+  const kb = new InlineKeyboard();
+
   if (reminders.length > 0) {
     lines.push(`\n🔔 <b>Pending reminders</b>`);
     for (const r of reminders) {
-      const fireAt = r.last_fired ? new Date(r.last_fired) : null;
-      const inMs = fireAt ? fireAt.getTime() - Date.now() : 0;
-      const inMin = Math.max(0, Math.round(inMs / 60_000));
-      lines.push(`   fires in ~${inMin}m`);
+      const title = await reminderTitle(r);
+      lines.push(`• ${escapeHtml(title)} — ${fireTimeLabel(r.last_fired)}`);
+      kb.text(`🗑 ${title.slice(0, 30)}`, `notif:sched-del:${r.id}`).row();
     }
   }
 
   const firedCount = (await notifStore.list()).length;
   const firedLabel = firedCount > 0 ? `📬 Fired  (${firedCount})` : "📬 Fired";
 
-  const kb = new InlineKeyboard()
-    .text(firedLabel, "notif:tab:fired").row()
+  kb.text(firedLabel, "notif:tab:fired").row()
     .text("‹ Menu", "m2:menu");
 
   await editOrReply(
@@ -300,4 +326,10 @@ async function handleRemindLater(ctx: Context, notifId: string): Promise<void> {
       { parse_mode: "HTML", reply_markup: new InlineKeyboard() },
     );
   } catch { /* non-critical */ }
+}
+
+async function handleSchedDel(ctx: Context, schedId: string): Promise<void> {
+  await schedulesStore.remove(schedId);
+  await ctx.answerCallbackQuery({ text: "Reminder cancelled" });
+  return renderScheduledTab(ctx);
 }
