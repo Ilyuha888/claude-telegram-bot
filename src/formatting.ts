@@ -25,6 +25,13 @@ export function convertMarkdownToHtml(text: string): string {
   // Store code blocks temporarily to avoid processing their contents
   const codeBlocks: string[] = [];
   const inlineCodes: string[] = [];
+  const thinkingBlocks: string[] = [];
+
+  // Save <thinking>...</thinking> blocks before escaping
+  text = text.replace(/<thinking>([\s\S]*?)<\/thinking>/gi, (_, inner) => {
+    thinkingBlocks.push(inner);
+    return `\x00THINKING${thinkingBlocks.length - 1}\x00`;
+  });
 
   // Save code blocks first (```code```)
   text = text.replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, code) => {
@@ -81,6 +88,12 @@ export function convertMarkdownToHtml(text: string): string {
       `\x00INLINECODE${i}\x00`,
       `<code>${escapedCode}</code>`
     );
+  }
+
+  // Restore thinking blocks as spoilers
+  for (let i = 0; i < thinkingBlocks.length; i++) {
+    const escaped = escapeHtml(thinkingBlocks[i]!.trim());
+    text = text.replace(`\x00THINKING${i}\x00`, `<tg-spoiler>🧠 ${escaped}</tg-spoiler>`);
   }
 
   // Collapse multiple newlines
