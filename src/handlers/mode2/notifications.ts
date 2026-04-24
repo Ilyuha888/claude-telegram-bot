@@ -224,7 +224,15 @@ async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
   const state = new StreamingState();
   const statusCallback = createStatusCallback(ctx, state);
 
-  const priming = `Here is a scheduled notification I received. Please help me act on it:\n\n---\n${notif.content}\n---\n\nWhat would you suggest?`;
+  const SKILL_PRIMERS: Record<string, string> = {
+    weekly_curator:   "/curator",
+    monthly_audit:    "/curator",
+    quarterly_review: "/curator",
+  };
+  const skillPrimer = SKILL_PRIMERS[notif.prompt_key];
+  const priming = skillPrimer
+    ? skillPrimer
+    : `Here is a scheduled notification I received. Please help me act on it:\n\n---\n${notif.content}\n---\n\nWhat would you suggest?`;
 
   try {
     const userId = ctx.from?.id ?? 0;
