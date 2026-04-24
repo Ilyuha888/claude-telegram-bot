@@ -141,7 +141,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "send_file",
       description:
-        "Send a file to the user via Telegram. Supports images (png, jpg, gif, webp), videos (mp4, mov, avi, webm, mkv), audio (mp3, wav, ogg, flac, m4a), and any other file type. Delivery method is chosen by extension: photos cap at 10MB, everything else at 50MB. The path must be absolute and within ALLOWED_PATHS (or /tmp). Dotfile dirs (.git, .claude, .ssh) and secret filenames are refused. Fire-and-forget: you can continue generating after calling this tool.",
+        "Send a file to the user via Telegram. Supports images (png, jpg, gif, webp), videos (mp4, mov, avi, webm, mkv), audio (mp3, wav, ogg, flac, m4a), and any other file type. By default, images are sent as photos (Telegram-compressed, 10MB limit). Set send_as_document=true to send any file — including images — as a document (original quality, no compression, 50MB limit). The path must be absolute and within ALLOWED_PATHS (or /tmp). Dotfile dirs (.git, .claude, .ssh) and secret filenames are refused. Fire-and-forget: you can continue generating after calling this tool.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -153,6 +153,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           caption: {
             type: "string",
             description: "Optional caption displayed with the file in Telegram.",
+          },
+          send_as_document: {
+            type: "boolean",
+            description:
+              "If true, send the file as a document regardless of extension. Preserves original quality for images (no Telegram compression). Applies the 50MB document size limit instead of the 10MB photo limit.",
           },
         },
         required: ["file_path"],
@@ -166,9 +171,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error(`Unknown tool: ${request.params.name}`);
   }
 
-  const args = request.params.arguments as { file_path?: string; caption?: string };
+  const args = request.params.arguments as { file_path?: string; caption?: string; send_as_document?: boolean };
   const filePath = args.file_path ?? "";
   const caption = args.caption ?? "";
+  const sendAsDocument = args.send_as_document === true;
 
   const validation = validatePath(filePath);
   if (!validation.ok) {
@@ -188,7 +194,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return errorResponse(`Error: File not found or empty: ${resolvedPath}`);
   }
 
-  const { limit, kind } = sizeLimitFor(resolvedPath);
+  const { limit, kind } = sendAsDocument
+    ? { limit: DOCUMENT_MAX_SIZE, kind: "document" as const }
+    : sizeLimitFor(resolvedPath);
   if (size > limit) {
     const sizeMB = (size / (1024 * 1024)).toFixed(1);
     const limitMB = (limit / (1024 * 1024)).toFixed(0);

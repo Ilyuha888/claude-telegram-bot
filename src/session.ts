@@ -56,6 +56,7 @@ function extractPath(input: Record<string, unknown>): string | null {
 }
 
 function checkAutoApprove(toolName: string, input: Record<string, unknown>): boolean {
+  if (toolName.startsWith("mcp__send-file")) return true;
   if (WRITE_TOOLS.has(toolName) || toolName === "Read") {
     const p = extractPath(input);
     return p !== null && isPathAllowed(p);
@@ -584,6 +585,13 @@ class ClaudeSession {
         if (event.type === "result") {
           console.log("Response complete");
           queryCompleted = true;
+
+          // Final sweep: pick up any send-file requests written after the tool_use
+          // event fired (the MCP server runs after the assistant event, so the early
+          // poll in the tool_use handler always fires too soon).
+          if (ctx && chatId) {
+            await checkPendingSendFileRequests(ctx, chatId, userId, username);
+          }
 
           // Capture usage if available
           if ("usage" in event && event.usage) {
