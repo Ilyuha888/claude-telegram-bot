@@ -166,8 +166,10 @@ const runner = run(bot);
 
 // Mode-2 boot tasks: resume dead sessions, then start idle reaper
 import { resumeOnBoot, startReaper } from "./mode2/reaper";
+import { startScheduler, stopScheduler } from "./scheduler";
 resumeOnBoot().catch((err) => console.error("resumeOnBoot error:", err));
 startReaper();
+startScheduler(bot).catch((err) => console.error("startScheduler error:", err));
 
 // Graceful shutdown
 const stopRunner = () => {
@@ -179,12 +181,14 @@ const stopRunner = () => {
 
 process.on("SIGINT", () => {
   console.log("Received SIGINT");
+  stopScheduler().catch(() => {});
   stopRunner();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   console.log("Received SIGTERM");
+  stopScheduler().catch(() => {});
   stopRunner();
   process.exit(0);
 });

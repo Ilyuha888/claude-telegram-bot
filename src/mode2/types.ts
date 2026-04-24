@@ -22,3 +22,36 @@ export type WorkSession = {
 export type SessionsFile = {
   sessions: WorkSession[];
 };
+
+// ── Scheduler types ─────────────────────────────────────────────────────────
+
+export type Schedule = {
+  id: string;
+  cron: string;
+  tz: string;
+  prompt_key: string;
+  last_fired: string | null;
+  one_shot?: boolean;
+  payload?: { notification_id: string };
+};
+
+export type SchedulesFile = {
+  schedules: Schedule[];
+};
+
+export type NotificationStatus = "unread" | "read" | "deleted";
+
+export type Notification = {
+  id: string;
+  fired_at: string;
+  prompt_key: string;
+  title: string;
+  content: string;
+  telegram_message_id?: number;
+  telegram_chat_id?: number;
+  status: NotificationStatus;
+};
+
+export type NotificationsFile = {
+  notifications: Notification[];
+};

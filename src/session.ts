@@ -116,7 +116,7 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 // Maximum number of sessions to keep in history
 const MAX_SESSIONS = 5;
 
-class ClaudeSession {
+export class ClaudeSession {
   sessionId: string | null = null;
   lastActivity: Date | null = null;
   queryStarted: Date | null = null;
@@ -135,6 +135,12 @@ class ClaudeSession {
   private stopRequested = false;
   private _isProcessing = false;
   private _wasInterruptedByNewMessage = false;
+
+  private readonly persist: boolean;
+
+  constructor(opts?: { persist?: boolean }) {
+    this.persist = opts?.persist ?? true;
+  }
 
   get isActive(): boolean {
     return this.sessionId !== null;
@@ -666,7 +672,7 @@ class ClaudeSession {
    * Saves to multi-session history format.
    */
   saveSession(): void {
-    if (!this.sessionId) return;
+    if (!this.sessionId || !this.persist) return;
 
     try {
       // Load existing session history

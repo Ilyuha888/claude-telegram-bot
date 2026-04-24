@@ -14,6 +14,8 @@ import * as sh from "../../mode2/sh";
 import * as store from "../../mode2/store";
 import type { WorkSession } from "../../mode2/types";
 import { TmuxMissing, SpawnFailed, WorktreeExists } from "../../mode2/errors";
+import * as notifStore from "../../mode2/notifications-store";
+import { renderNotificationsTab } from "./notifications";
 
 function checkAuth(ctx: Context): boolean {
   const userId = ctx.from?.id;
@@ -22,10 +24,12 @@ function checkAuth(ctx: Context): boolean {
 
 // ── Keyboards ────────────────────────────────────────────────────────────────
 
-function mainMenuKeyboard(): InlineKeyboard {
+function mainMenuKeyboard(unread = 0): InlineKeyboard {
+  const notifLabel = unread > 0 ? `📬 Notifications (${unread})` : "📬 Notifications";
   return new InlineKeyboard()
     .text("🗂 Work",     "m2:work").row()
-    .text("📋 Sessions", "m2:sessions");
+    .text("📋 Sessions", "m2:sessions").row()
+    .text(notifLabel,    "m2:notifications");
 }
 
 function repoKeyboard(repos: string[]): InlineKeyboard {
@@ -57,7 +61,8 @@ function sessionDetailKeyboard(slug: string): InlineKeyboard {
 
 export async function handleMenu(ctx: Context): Promise<void> {
   if (!checkAuth(ctx)) { await ctx.reply("Unauthorized"); return; }
-  await ctx.reply("Ops", { reply_markup: mainMenuKeyboard() });
+  const unread = await notifStore.unreadCount();
+  await ctx.reply("Ops", { reply_markup: mainMenuKeyboard(unread) });
 }
 
 // ── Callback router ───────────────────────────────────────────────────────────
@@ -71,7 +76,13 @@ export async function handleMode2Callback(ctx: Context, action: string): Promise
   await ctx.answerCallbackQuery();
 
   if (action === "menu") {
-    await edit(ctx, "Ops", mainMenuKeyboard());
+    const unread = await notifStore.unreadCount();
+    await edit(ctx, "Ops", mainMenuKeyboard(unread));
+    return;
+  }
+
+  if (action === "notifications") {
+    await renderNotificationsTab(ctx);
     return;
   }
 

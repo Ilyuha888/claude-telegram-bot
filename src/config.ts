@@ -253,6 +253,8 @@ try { await Bun.write(`${TEMP_DIR}/.keep`, ""); } catch { /* non-fatal: temp dir
 // ============== Mode-2 Configuration ==============
 
 export const SESSIONS_FILE = `${BOT_DATA_DIR}/sessions.json`;
+export const SCHEDULES_FILE = `${BOT_DATA_DIR}/schedules.json`;
+export const NOTIFICATIONS_FILE = `${BOT_DATA_DIR}/notifications.json`;
 export const REAPER_INTERVAL_MS = parseInt(process.env.REAPER_INTERVAL_MS || "3600000", 10);
 export const REAPER_IDLE_THRESHOLD_MS = parseInt(
   process.env.REAPER_IDLE_THRESHOLD_MS || String(7 * 24 * 60 * 60 * 1000),

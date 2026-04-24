@@ -13,6 +13,7 @@ import { resolveQuestionRequest } from "./question";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
 import { handleSessions, handleRepos, handleWork, handleClose, handleMode2Callback } from "./mode2";
+import { handleNotificationCallback } from "./mode2/notifications";
 import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 
@@ -48,7 +49,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3c. Handle Mode-2 inline nav callbacks: m2:{action}
+  // 3c. Handle notification callbacks: notif:{action}:{id}
+  if (callbackData.startsWith("notif:")) {
+    await handleNotificationCallback(ctx);
+    return;
+  }
+
+  // 3d. Handle Mode-2 inline nav callbacks: m2:{action}
   if (callbackData.startsWith("m2:")) {
     await handleMode2Callback(ctx, callbackData.slice("m2:".length));
     return;
