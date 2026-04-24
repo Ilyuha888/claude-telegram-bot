@@ -30,7 +30,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 - **`src/formatting.ts`** - Markdown→HTML conversion for Telegram, tool status emoji formatting
 - **`src/utils.ts`** - Audit logging, voice transcription (OpenAI), typing indicators
 - **`src/types.ts`** - Shared TypeScript types
-- **`src/scheduler.ts`** - In-process node-cron scheduler: fire loop, dialogue-interrupt gate (waits ≤60s if session active), boot catch-up, soft Telegram delivery with notification keyboard
+- **`src/scheduler.ts`** - In-process node-cron scheduler: fire loop, dialogue-interrupt gate (waits ≤60s if session active), boot catch-up, soft Telegram delivery with notification keyboard. `fs.watch(SCHEDULES_FILE)` picks up new one-shot entries written at runtime (e.g. by Scribe) without restart.
 - **`src/scheduler-prompts.ts`** - Source-controlled prompt bodies for the 4 V_rich routines (daily focus, weekly curator, monthly audit, quarterly review)
 
 ### Mode-2 modules (`src/mode2/`)
@@ -54,7 +54,7 @@ Each message type has a dedicated async handler:
 - **`callback.ts`** - Inline keyboard button handling; prefix dispatch: `resume:`, `permask:`, `notif:`, `m2:`, `menu:`, `askq:`, `askuser:`
 - **`streaming.ts`** - Shared `StreamingState` and status callback factory
 - **`mode2/menu.ts`** - `/menu` inline keyboard controller; all `m2:` callbacks handled here
-- **`mode2/notifications.ts`** - Notification callbacks (`notif:show/new/del/remind/tab`); Scheduled and Fired tab renderers
+- **`mode2/notifications.ts`** - Notification callbacks (`notif:show/new/del/remind/sched-del/tab`); Scheduled and Fired tab renderers. Scheduled tab shows verbose pending one-shot reminders with per-row delete buttons and human-readable fire times.
 
 ### Security Layers
 
@@ -96,6 +96,8 @@ MCP servers defined in `mcp-config.ts`.
 **After code changes**: Restart the bot so changes can be tested. On Linux with systemd: `sudo systemctl restart claude-telegram-bot`. For manual runs: `bun run start`. The scheduler re-registers all cron handles on startup and fires any stale catch-up tasks automatically.
 
 **Scheduler invariants**: Ephemeral Claude sessions spawned by the scheduler MUST NOT write to `SESSION_FILE` (enforced via `ClaudeSession({ persist: false })`). The scheduler polls `session.isRunning` for ≤60s before firing to avoid interrupting active dialogue.
+
+**One-shot reminder lifecycle**: Scribe writes a `scribe_reminder` entry to `bot-data/schedules.json` (prompt_key `scribe_reminder`, `one_shot: true`, payload has `reminder_message` + `note_path`). The scheduler's `fs.watch` picks this up within seconds and registers a `setTimeout` timer — no restart needed. When fired, the notification shows a [Log outcome] button that primes a new session with the original reminder title and note content so the agent can capture the outcome. The `registeredOneShotIds` Set prevents duplicate timer registration on re-reads.
 
 ## Attachment persistence contract
 
@@ -162,11 +164,17 @@ Three Claude Code skills for Obsidian vault operations, invocable via Telegram s
 
 | Skill | Invoke | What it does |
 |-------|--------|--------------|
-| **Scribe** | `/scribe` or `/scribe <text>` | Captures input → `User_Obsidian_Vault/00-inbox/` with correct frontmatter, duplicate check, attachment wikilinks, commit-confirm |
+| **Scribe** | `/scribe` or `/scribe <text>` | Captures input → `User_Obsidian_Vault/00-inbox/` with correct frontmatter, duplicate check, attachment wikilinks, commit-confirm. Detects time references and sets a `scribe_reminder` one-shot if `reminder_date` found. |
 | **Retriever** | `/retriever what do I know about X` | Vault-grounded answer with note citations; scope statement when answer is partial; no hallucination |
 | **Curator** | `/curator` | Stale inbox, draft promotions, orphan candidates, MOC gaps — read-only, ≤1500 chars for Telegram |
 
 Skill files live in `~/.claude/skills/` on the VM. The weekly curator also runs automatically every Sunday 20:00 MSK via the scheduler (`prompt_key: weekly_curator` in `schedules.json`).
+
+**Implicit routing**: The SAFETY_PROMPT (rule 6 in `src/config.ts`) maps natural-language intent patterns to the correct skill — the user doesn't need to type `/scribe` explicitly. Triggers: "note for tomorrow", "save this", "remember that", "what do I know about", "vault health", etc.
+
+**Scribe frontmatter**: When a time reference is detected, Scribe adds `reminder_date: YYYY-MM-DD` to the note frontmatter and writes a `scribe_reminder` entry to `bot-data/schedules.json` after the commit is confirmed. The fire time defaults to 09:00 MSK.
+
+**Notification UX for routine sessions**: [New session] on curator/audit/quarterly notifications primes with `/curator`. [Log outcome] on scribe_reminder notifications primes with the original note content for outcome capture.
 
 ## Governance
 
