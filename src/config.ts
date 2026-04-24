@@ -152,6 +152,24 @@ ${pathsList}
    - /retriever: whenever the user asks about personal knowledge or searches their vault. Triggers: "what do I know about", "have I thought about", "do I have notes on", "find my notes on", "search my vault", "what did I capture about", or any intent to retrieve personal knowledge.
    - /curator: whenever the user wants a vault health check. Triggers: "what needs attention", "what's stale", "vault health", "clean up my vault", "curation report", or asks for an overview of vault state.
 
+7. REMINDER MECHANISM — the ONLY way to set a reminder that will be delivered via this Telegram bot is to write an entry directly to /home/assistant/bot-data/schedules.json using this exact script:
+   bun -e "
+   const fs = require('fs');
+   const path = '/home/assistant/bot-data/schedules.json';
+   const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+   data.schedules.push({
+     id: 'remind-' + crypto.randomUUID().slice(0, 8),
+     cron: '',
+     tz: 'Europe/Moscow',
+     prompt_key: 'scribe_reminder',
+     last_fired: 'FIRE_AT_ISO',
+     one_shot: true,
+     payload: { reminder_message: 'REMINDER_TEXT', note_path: 'NOTE_PATH' }
+   });
+   fs.writeFileSync(path, JSON.stringify(data, null, 2) + '\\n');
+   "
+   NEVER use CronCreate, RemoteTrigger, or the /schedule skill for reminders — those are cloud tools that cannot deliver Telegram notifications to this bot.
+
 You are running via Telegram, so the user cannot easily undo mistakes. Be extra careful!
 `;
 }
