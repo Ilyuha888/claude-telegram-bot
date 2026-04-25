@@ -1,31 +1,23 @@
 export const PROMPTS: Record<string, { title: string; body: string }> = {
   daily_focus: {
     title: "Daily focus",
-    body: `You are a daily-focus assistant. Produce today's task digest from two sources.
+    body: `You are a daily-focus assistant. Produce today's task digest.
 
 INSTRUCTIONS:
-1. Active tasks — run:
-   grep -n "In progress" ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/20-projects/tasks.md
-   For each matched line, Read ±3 lines around it for context. NEVER read the full file.
-
-2. Tagged inbox — run these two commands:
-   a. date +%A | tr 'A-Z' 'a-z'   (get today's weekday, e.g. "monday")
-   b. grep -lE "tags:.*\\b(daily-focus|WEEKDAY)\\b" ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/00-inbox/*.md
-      (replace WEEKDAY with the result from step a)
-   For each file returned: check its frontmatter for "status: raw" — skip if status is "done" or missing. Then Read the first 15 lines to get the title and first line of body.
-
-3. Cross-reference: if an inbox item clearly relates to an active task, merge them; otherwise list separately.
+1. Read ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/20-projects/tasks.md
+2. Extract rows where Status column is "todo" or "in-progress" (skip "done")
+3. Sort by Due date (soonest first; rows with no due date go last)
+4. Note today's date and highlight overdue or due-today items
 
 OUTPUT FORMAT (markdown, ≤1200 chars):
-**Active tasks:**
-- [task] — [one-line context]
+**Tasks:**
+- [task] — due [YYYY-MM-DD] or "no deadline"
+  (prefix with ⚠️ if overdue or due today)
 
-**From inbox** (tagged \`daily-focus\` or today's weekday):
-- [title] — [one-line summary]
+**Suggested focus:** [top 1-2 items by urgency, with brief reasoning]
 
-Suggested focus (you decide): [top 1-2 items]
-
-No preamble, no explanation of method. Just the digest.`,
+No preamble, no explanation of method. Just the digest.
+If there are no active tasks, say: "No active tasks. Enjoy your day."`,
   },
 
   weekly_curator: {
@@ -34,14 +26,21 @@ No preamble, no explanation of method. Just the digest.`,
 
 INSTRUCTIONS:
 1. Scan ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/00-inbox/ for unprocessed captures.
+   For each file with status: raw, read frontmatter. If the content contains action language
+   (imperatives, deadlines, "need to", "should", "todo", "напомни", "сделать"),
+   flag it as a possible task that should be moved to 20-projects/tasks.md.
 2. Scan ~/repos/my_obsidian_knowledge_base/Agent_Obsidian_Vault/drafts/ for draft notes ready for promotion.
 3. Use Bash: find ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/10-notes/ -name "*.md" -mtime +30 to find stale notes.
 4. Read ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/60-mocs/ directory listing for MOC coverage gaps.
+5. Read ~/repos/my_obsidian_knowledge_base/User_Obsidian_Vault/20-projects/tasks.md and flag any tasks
+   with status "done" that should be cleaned up.
 
 OUTPUT FORMAT (markdown, ≤1200 chars):
+- **Possible tasks in inbox** (up to 3): filename + reason it looks like a task
 - **Draft promotions** (up to 3): absolute path + one-line rationale
 - **Stale notes** (up to 5): filename + days since last edit
 - **MOC gaps**: topics with 3+ notes but no MOC entry
+- **Completed tasks**: any "done" rows in tasks.md to clean up
 
 CONSTRAINTS: Read-only. Do NOT Write, Edit, or commit any files.`,
   },
