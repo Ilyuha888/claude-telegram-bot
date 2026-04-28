@@ -48,7 +48,7 @@ import type {
 
 // Deny list for Bash: git remote/history ops + sudo. Local filesystem is git-recoverable.
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const BASH_DENY_RE = /\b(sudo|git\s+(push|commit|reset|rebase|clean))\b/i;
+const BASH_DENY_RE = /\b(sudo|rm|git\s+(push|commit|reset|rebase|clean))\b/i;
 
 function extractPath(input: Record<string, unknown>): string | null {
   const p = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
