@@ -8,12 +8,16 @@
 
 import { InlineKeyboard } from "grammy";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import { auditLogTool } from "../utils";
 
 interface PendingPermission {
   resolve: (result: PermissionResult) => void;
   timeout: ReturnType<typeof setTimeout>;
   originalInput: Record<string, unknown>;
   toolDisplay: string;
+  toolName: string;
+  userId: number;
+  username: string;
 }
 
 // Active permission requests keyed by requestId
@@ -29,7 +33,10 @@ const PERMISSION_TIMEOUT_MS = 900_000; // 15 minutes
 export function awaitPermission(
   requestId: string,
   originalInput: Record<string, unknown>,
-  toolDisplay: string
+  toolDisplay: string,
+  toolName: string,
+  userId: number,
+  username: string,
 ): Promise<PermissionResult> {
   return new Promise<PermissionResult>((resolve) => {
     const timeout = setTimeout(() => {
@@ -37,6 +44,7 @@ export function awaitPermission(
         console.warn(
           `Permission request ${requestId} timed out after ${PERMISSION_TIMEOUT_MS / 1000}s — auto-denying with interrupt`
         );
+        auditLogTool(userId, username, toolName, originalInput, true, "permission timeout").catch(() => {});
         resolve({
           behavior: "deny",
           message: "Permission request timed out — no response from user",
@@ -45,7 +53,7 @@ export function awaitPermission(
       }
     }, PERMISSION_TIMEOUT_MS);
 
-    pendingPermissions.set(requestId, { resolve, timeout, originalInput, toolDisplay });
+    pendingPermissions.set(requestId, { resolve, timeout, originalInput, toolDisplay, toolName, userId, username });
   });
 }
 
@@ -72,6 +80,15 @@ export function resolvePermissionRequest(
           message: "Denied by user via Telegram",
           interrupt: true,
         };
+
+  auditLogTool(
+    pending.userId,
+    pending.username,
+    pending.toolName,
+    pending.originalInput,
+    decision === "deny",
+    decision === "deny" ? "denied via Telegram" : "approved via Telegram",
+  ).catch(() => {});
 
   pending.resolve(result);
   return { ok: true, toolDisplay: pending.toolDisplay };

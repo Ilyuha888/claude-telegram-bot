@@ -36,7 +36,7 @@ import {
   formatPermissionPrompt,
 } from "./handlers/permission";
 import { handleAskUserQuestion } from "./handlers/question";
-import { checkCommandSafety, isPathAllowed } from "./security";
+import { checkCommandSafety, isBashAutoApprovable, isPathAllowed } from "./security";
 import { auditLogTool } from "./utils";
 
 import type {
@@ -63,7 +63,8 @@ function checkAutoApprove(toolName: string, input: Record<string, unknown>): boo
   }
   if (toolName === "Bash") {
     const cmd = (input.command as string) ?? "";
-    return !BASH_DENY_RE.test(cmd);
+    if (BASH_DENY_RE.test(cmd)) return false;
+    return isBashAutoApprovable(cmd);
   }
   return false;
 }
@@ -371,7 +372,14 @@ export class ClaudeSession {
               return { behavior: "deny", message: "Could not reach Telegram to ask permission", interrupt: true };
             }
             console.log(`Permission request ${requestId} for ${toolName} — awaiting Telegram response`);
-            return awaitPermission(requestId, input, toolDisplay);
+            return awaitPermission(
+              requestId,
+              input,
+              toolDisplay,
+              toolName,
+              ctx.from?.id ?? 0,
+              ctx.from?.username ?? "bot",
+            );
           }
         : undefined,
     };

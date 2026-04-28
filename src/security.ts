@@ -158,6 +158,29 @@ export function checkCommandSafety(
   return [true, ""];
 }
 
+// ============== Bash auto-approve allowlist ==============
+
+const BASH_SHELL_META_RE = /[;&|`$()<>]|>>|&&|\|\|/;
+
+// argv[0] prefix match for known read-only utilities.
+// awk/sed intentionally excluded: `awk 'BEGIN{system("...")}' ` is a live execution path.
+const BASH_AUTO_APPROVE_RE =
+  /^\s*(ls|pwd|cat|head|tail|wc|stat|file|du|df|which|whereis|echo|printf|tree|find|grep|rg|ag|fd|sort|uniq|cut|jq|yq|column|date|env|hostname|uname|true|false|test|\[)(\s|$)/;
+
+// Read-only git subcommands — none mutate working tree, index, refs, or remote.
+const GIT_READONLY_RE =
+  /^\s*git\s+(status|diff|log|show|branch|rev-parse|describe|ls-files|ls-tree|blame|grep|shortlog|reflog|cat-file|symbolic-ref|merge-base|whatchanged|stash\s+list|tag\s+-l|tag\s*$|remote\s+(?:-v|show)|config\s+--get)(\s|$)/;
+
+// find -exec/-delete bypasses the shell-meta check since the command is an argument.
+const BASH_FIND_DESTRUCTIVE_RE = /\bfind\b.*\s-(exec|execdir|delete|ok)\b/;
+
+export function isBashAutoApprovable(command: string): boolean {
+  if (!command) return false;
+  if (BASH_SHELL_META_RE.test(command)) return false;
+  if (BASH_FIND_DESTRUCTIVE_RE.test(command)) return false;
+  return GIT_READONLY_RE.test(command) || BASH_AUTO_APPROVE_RE.test(command);
+}
+
 // ============== Authorization ==============
 
 export function isAuthorized(

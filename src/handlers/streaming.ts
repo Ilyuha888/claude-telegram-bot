@@ -215,24 +215,54 @@ function formatWithinLimit(
 const MARKDOWN_CHUNK_LIMIT = 3500;
 
 /**
+ * Returns the opening fence line (e.g. "```python") if text ends inside an
+ * unclosed code block, or null if all fences are matched.
+ */
+function getUnclosedFence(text: string): string | null {
+  let openFence: string | null = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(/^```(\w*)$/);
+    if (!m) continue;
+    if (openFence === null) {
+      openFence = `\`\`\`${m[1]}`;
+    } else {
+      openFence = null;
+    }
+  }
+  return openFence;
+}
+
+/**
  * Split raw markdown at paragraph/line boundaries then convert each chunk to
  * HTML. Splitting before conversion guarantees no HTML tag can span a boundary.
+ * Code fences that span a split point are closed and reopened so each chunk
+ * is a self-contained markdown document.
  */
 async function sendChunkedMessages(
   ctx: Context,
   rawContent: string,
 ): Promise<void> {
-  const chunks: string[] = [];
+  const rawChunks: string[] = [];
   let remaining = rawContent;
 
   while (remaining.length > MARKDOWN_CHUNK_LIMIT) {
     let splitAt = remaining.lastIndexOf("\n\n", MARKDOWN_CHUNK_LIMIT);
     if (splitAt <= 0) splitAt = remaining.lastIndexOf("\n", MARKDOWN_CHUNK_LIMIT);
     if (splitAt <= 0) splitAt = MARKDOWN_CHUNK_LIMIT;
-    chunks.push(remaining.slice(0, splitAt));
+    rawChunks.push(remaining.slice(0, splitAt));
     remaining = remaining.slice(splitAt).trimStart();
   }
-  if (remaining.length > 0) chunks.push(remaining);
+  if (remaining.length > 0) rawChunks.push(remaining);
+
+  // Close any code fence that spans a chunk boundary and reopen it in the next.
+  const chunks: string[] = [];
+  let pendingFence: string | null = null;
+  for (const chunk of rawChunks) {
+    const withOpener = pendingFence ? `${pendingFence}\n${chunk}` : chunk;
+    const unclosed = getUnclosedFence(withOpener);
+    chunks.push(unclosed !== null ? `${withOpener}\n\`\`\`` : withOpener);
+    pendingFence = unclosed;
+  }
 
   for (const chunk of chunks) {
     const formatted = convertMarkdownToHtml(chunk);
