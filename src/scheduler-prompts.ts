@@ -59,7 +59,13 @@ INSTRUCTIONS:
    Per va-contract: drafts live in target folders, not inbox.
    Use Grep to find status: draft in: notes/, projects/, areas/, resources/
    Run: grep -rl "status: draft" ~/repos/my_obsidian_knowledge_base/notes/ ~/repos/my_obsidian_knowledge_base/projects/ ~/repos/my_obsidian_knowledge_base/areas/ ~/repos/my_obsidian_knowledge_base/resources/
-   For each match, read first 20 lines. Flag as promotion-ready if: clear title + substantive content + meaningful tags.
+   For each match, read first 30 lines + estimate body word count (lines after closing ---).
+   Flag as promotion-ready if ALL hold (per va-contract.md § Draft Promotion-Ready Rule):
+   - status: draft
+   - base frontmatter present: type, status, created, source all non-empty
+   - body word count ≥ 300
+   - created date ≥ 14 days ago
+   - no raw-capture markers in body: TODO:, WIP, [draft], raw transcript
    Propose up to 3, with suggested target folder.
 
 3. PROJECT MOMENTUM

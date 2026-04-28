@@ -260,7 +260,7 @@ async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
 
   let priming: string;
   if (skillPrimer) {
-    priming = skillPrimer;
+    priming = `${skillPrimer}\n\nLast report (${notif.fired_at}):\n---\n${notif.content}\n---\n\nIf actionable items exist (drafts to promote, MOCs to create, projects to archive), propose them one-by-one and wait for my confirmation before any vault write.`;
   } else if (notif.prompt_key === "scribe_reminder") {
     priming = `My reminder just fired: "${notif.title}"\n\n${notif.content}\n\nI've done it. Read the note for context, then help me capture what I learned.`;
   } else {
