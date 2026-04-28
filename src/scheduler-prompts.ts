@@ -6,7 +6,7 @@ export const PROMPTS: Record<string, { title: string; body: string }> = {
 INSTRUCTIONS:
 
 1. Read ~/repos/my_obsidian_knowledge_base/projects/tasks.md
-   Extract rows where Status is "todo" or "in-progress" (skip "done"). Max 3 tasks.
+   Extract rows where Status is exactly "todo" or "in-progress" (skip "done"; schema: Task|Due|Status per va-contract.md). Max 3 tasks.
 
 2. List all files in ~/repos/my_obsidian_knowledge_base/projects/
    For each .md file (excluding tasks.md), read frontmatter only (first 15 lines).
