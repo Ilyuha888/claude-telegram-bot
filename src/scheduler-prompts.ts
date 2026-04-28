@@ -165,7 +165,7 @@ INSTRUCTIONS:
    Identify any theme that appears 3+ times but has no evergreen note — signals unmet capture→promote pipeline.
 
 5. LATEST MONTHLY REPORT (context)
-   Check if ~/repos/my_obsidian_knowledge_base/meta/reports/ exists and read the most recent monthly file if present.
+   Read the most recent YYYY-MM.md file in ~/repos/my_obsidian_knowledge_base/meta/reports/ if any are present (skip README.md).
 
 OUTPUT FORMAT (Telegram markdown, ≤1600 chars):
 

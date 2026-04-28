@@ -164,7 +164,7 @@ Three Claude Code skills for Obsidian vault operations, invocable via Telegram s
 
 | Skill | Invoke | What it does |
 |-------|--------|--------------|
-| **Scribe** | `/scribe` or `/scribe <text>` | Captures input → `User_Obsidian_Vault/00-inbox/` with correct frontmatter, duplicate check, attachment wikilinks, commit-confirm. Detects time references and sets a `scribe_reminder` one-shot if `reminder_date` found. |
+| **Scribe** | `/scribe` or `/scribe <text>` | Captures input → `~/repos/my_obsidian_knowledge_base/inbox/` with correct frontmatter, duplicate check, attachment wikilinks, commit-confirm. Detects time references and sets a `scribe_reminder` one-shot if `reminder_date` found. |
 | **Retriever** | `/retriever what do I know about X` | Vault-grounded answer with note citations; scope statement when answer is partial; no hallucination |
 | **Curator** | `/curator` | Stale inbox, draft promotions, orphan candidates, MOC gaps — read-only, ≤1500 chars for Telegram |
 
