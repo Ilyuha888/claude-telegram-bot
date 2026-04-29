@@ -3,6 +3,8 @@ export const PROMPTS: Record<string, { title: string; body: string }> = {
     title: "Daily focus",
     body: `You are a daily-focus assistant. Produce today's digest.
 
+CRITICAL: Your ENTIRE response must be the digest and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that section — never narrate the problem.
+
 INSTRUCTIONS:
 
 1. Read ~/repos/my_obsidian_knowledge_base/projects/tasks.md
@@ -39,12 +41,16 @@ OUTPUT FORMAT (Telegram markdown, ≤1200 chars):
 Rules:
 - If next_action is missing for an active project, show: "[project-name] — ⚠️ no next action set"
 - If no active projects and no tasks: "Nothing queued. Good time to do a weekly review."
-- No preamble. No method explanation. Just the digest.`,
+- No preamble. No method explanation. No reasoning about file paths or vault structure. Just the digest.
+- If you cannot read a file or a path is wrong, omit that section silently. Never explain what went wrong.
+- Your response starts with 📅 and contains only the formatted digest.`,
   },
 
   weekly_curator: {
     title: "Weekly curator",
     body: `You are the weekly vault curator. Produce a curation report.
+
+CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that item — never narrate the problem.
 
 INSTRUCTIONS:
 
@@ -96,12 +102,15 @@ OUTPUT FORMAT (Telegram markdown, ≤1400 chars):
 ✅ *Tasks to clean up*: • [task description]
 
 Write "✓ clear" for any section with nothing to report.
-CONSTRAINTS: Read-only. Do NOT write, edit, or commit any files.`,
+CONSTRAINTS: Read-only. Do NOT write, edit, or commit any files.
+Your response starts with 📋 and contains only the formatted report. No preamble, no reasoning.`,
   },
 
   monthly_audit: {
     title: "Monthly project audit",
     body: `You are the monthly project auditor. Review project health and area coverage.
+
+CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that item — never narrate the problem.
 
 INSTRUCTIONS:
 
@@ -141,12 +150,15 @@ OUTPUT FORMAT (Telegram markdown, ≤1400 chars):
 📦 *Recently archived*: • [item]
 🗺 *Area gaps*: • [area] — no active projects linked
 
-CONSTRAINTS: Read-only. Do NOT write, edit, or commit any files.`,
+CONSTRAINTS: Read-only. Do NOT write, edit, or commit any files.
+Your response starts with 🗓 and contains only the formatted report. No preamble, no reasoning.`,
   },
 
   quarterly_review: {
     title: "Quarterly review",
     body: `You are the quarterly vault reviewer. Produce a strategic synthesis — not a stats report.
+
+CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that item — never narrate the problem.
 
 INSTRUCTIONS:
 
@@ -186,6 +198,7 @@ OUTPUT FORMAT (Telegram markdown, ≤1600 chars):
   • [theme] — appeared N times
 💡 *One thing to do differently next quarter*: [your synthesis based on above]
 
-CONSTRAINTS: Read-only. Do NOT write, edit, or commit any files.`,
+CONSTRAINTS: Read-only. Do NOT write, edit, or commit any files.
+Your response starts with 🔭 and contains only the formatted report. No preamble, no reasoning.`,
   },
 };
