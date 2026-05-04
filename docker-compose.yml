@@ -1,0 +1,27 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env                         # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, etc.
+    environment:
+      # Container-internal paths (always fixed — don't override these)
+      BOT_DATA_DIR: /data/bot-data
+      CTB_VAULT_DIR: /data/vault
+      CLAUDE_WORKING_DIR: /data/vault
+      ALLOWED_PATHS: /data/vault,/data/bot-data,/root/.claude,/tmp
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      # Runtime state — clone https://github.com/Ilyuha888/bot-data or create your own
+      - ${BOT_DATA_DIR:-../bot-data}:/data/bot-data
+
+      # Knowledge vault — clone https://github.com/Ilyuha888/ctb-vault or use your own vault
+      - ${CTB_VAULT_DIR:-../ctb-vault}:/data/vault
+
+      # Claude CLI auth + user settings + skills
+      # The container reads ANTHROPIC_API_KEY from .env for authentication.
+      # Mount your ~/.claude/ to bring in skills, hooks, and custom settings.
+      - ${HOME}/.claude:/root/.claude:ro
+
+      # Temp files (voice, photos, documents)
+      - /tmp/telegram-bot:/tmp/telegram-bot
