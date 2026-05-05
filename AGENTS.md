@@ -67,14 +67,15 @@ Run `/h-status` to surface active decisions and stale artifacts. Do not re-litig
 
 ## Architecture Invariants
 
-These rules are mandatory:
+The canonical list lives in **`governance/ARCHITECTURE.md`** under "Architecture Invariants" — read it there. Any agent working in this repo must respect those rules.
 
-- the runtime is Claude Code on a Hetzner VM, not a custom-built orchestrator
-- the runtime LLM does not get arbitrary shell access — shell commands go through the allowlist
-- filesystem writes go only through policy-controlled tools or user-confirmed approval
-- the knowledge vault is a separate Git repository; Claude Code does not own it
-- the source of truth for long-term knowledge is the vault plus Git history, not conversation transcripts
-- the platform is scoped to a single user; multi-user support is explicitly out of scope until a haft decision supersedes `dec-20260320-001`
+Short summary (do not violate without a `haft_decision` superseding the relevant rule):
+
+- the runtime is Claude Code, not a custom orchestrator
+- the runtime LLM has no arbitrary shell access — commands flow through the allowlist
+- filesystem writes go only through policy-controlled tools or explicit user approval
+- the knowledge vault is a separate git repository; the bot does not own it
+- single-user platform until a haft decision supersedes `dec-20260320-001`
 
 ## Repository Layout
 

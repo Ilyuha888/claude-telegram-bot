@@ -3,50 +3,117 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bun](https://img.shields.io/badge/Bun-1.3+-black.svg)](https://bun.sh/)
 
-**Turn [Claude Code](https://claude.com/product/claude-code) into your personal assistant, accessible from anywhere via Telegram.**
+**A personal knowledge system on Telegram.** Capture thoughts via voice or text, get answers grounded in your own notes, and let scheduled routines keep your vault healthy. Built on [Claude Code](https://claude.com/product/claude-code), powered by an Obsidian-compatible knowledge vault, glued together with three custom PKM skills.
 
-Send text, voice, photos, documents, audio, and video. Get streaming responses and real-time tool status on your phone.
+The Telegram bot is just the access surface. The actual product is the **capture → triage → promote → review** loop running on top of your own files in your own git repo.
 
-> **Claude Code only.** The bot runs on the Claude Code agent runtime — skills, hooks, MCP integrations, and the `canUseTool` permission bridge are all Claude Code-specific. Porting to Codex or Gemini would require replacing the entire agent runtime (not just swapping a model name). This is by design for v1.
-
----
-
-## What it does
-
-- 💬 **Text / Voice / Photos / Documents / Audio / Video** — every Telegram media type works
-- 🔄 **Session persistence** — conversations continue across messages; `/resume` restores old sessions with a recap
-- 📨 **Message queuing** — send multiple messages while Claude works; prefix with `!` to interrupt
-- 🧠 **Extended thinking** — say "think" or "reason" to trigger Claude's reasoning mode
-- 🔘 **Interactive buttons** — Claude presents choices as tappable inline keyboards via `ask_user` MCP
-- 📎 **File delivery** — Claude sends files back via `send_file` MCP
-- 📅 **Scheduled routines** — daily focus digest, weekly vault curation, monthly project audit, quarterly review (all configurable)
-- 📝 **PKM skills** — `/scribe` captures notes to your vault, `/retriever` answers vault-grounded questions, `/curator` runs a vault health report
-- 🔔 **Notifications** — delivered via inline keyboard with [Log outcome] flow for scribe reminders
+> **Claude Code only.** The bot runs on the Claude Code agent runtime — skills, hooks, MCP integrations, and the `canUseTool` permission bridge are all Claude Code-specific. Porting to Codex or Gemini would require replacing the entire agent runtime. This is by design for v1.
 
 ---
 
-## Three-repo layout
-
-The full setup uses three repos cloned side by side:
+## How it works — the knowledge flywheel
 
 ```
-~/repos/
-├── claude-telegram-bot/   # This repo — bot code, Docker, skills, settings
-├── ctb-vault/             # Knowledge base scaffold (PARA + V-A methodology)
-└── bot-data/              # Runtime state (schedules, notifications)
+                  ┌──────────────────────────────────┐
+                  │ 1. CAPTURE                       │
+                  │ /scribe (text/voice) → inbox/    │◄─── you, on the go via Telegram
+                  └────────────┬─────────────────────┘
+                               ▼
+                  ┌──────────────────────────────────┐
+                  │ 2. TRIAGE                        │
+                  │ Weekly /curator scans inbox/     │
+                  │ flags drafts ready for promotion │◄─── scheduler routine
+                  └────────────┬─────────────────────┘
+                               ▼
+                  ┌──────────────────────────────────┐
+                  │ 3. PROMOTE                       │
+                  │ You decide what's evergreen      │◄─── human-in-the-loop
+                  │ raw → draft → evergreen          │
+                  └────────────┬─────────────────────┘
+                               ▼
+                  ┌──────────────────────────────────┐
+                  │ 4. REVIEW                        │
+                  │ Daily focus digest               │
+                  │ Monthly project audit            │◄─── scheduler routines
+                  │ Quarterly strategic review       │
+                  └────────────┬─────────────────────┘
+                               │
+                  ┌────────────▼─────────────────────┐
+                  │ 5. RETRIEVE                      │
+                  │ /retriever — vault-grounded      │◄─── you, asking questions
+                  │   answers with citations         │
+                  └──────────────────────────────────┘
 ```
 
-Clone all three before starting:
+The vault is your knowledge graph; the bot is the loop's interface; the scheduler is the maintenance cron. Each piece is replaceable — the methodology (V-A note types, PARA folders, lifecycle states) is documented in the vault itself at `meta/va-contract.md`, so you own how it works.
+
+---
+
+## The three layers
+
+### 1. The vault — `ctb-vault`
+
+An [Obsidian](https://obsidian.md)-compatible scaffold with [PARA folders](https://fortelabs.com/blog/para/) and the **V-A methodology** baked in:
+- 6 note types (evergreen, inbox, project, area, person, reference)
+- Lifecycle states (raw → draft → evergreen | archived)
+- Frontmatter contract enforced by the PKM skills
+
+Read [ctb-vault/README.md](https://github.com/Ilyuha888/ctb-vault) for the methodology spec.
+
+### 2. The PKM skills — invokable from Telegram
+
+| Skill | What it does |
+|---|---|
+| `/scribe <text>` | Capture to `inbox/` with correct frontmatter; detects time refs and creates one-shot reminders; commit-confirm flow |
+| `/retriever <question>` | Vault-grounded answer with note citations; says "I don't know" rather than hallucinate |
+| `/curator` | Vault health report: stale inbox, draft promotions ready, project momentum, orphan candidates, MOC gaps |
+
+Skills live in the vault's `.claude/skills/` directory — version-controlled with your knowledge, not the bot. Customize them.
+
+### 3. The scheduler — built into the bot
+
+Four built-in routines run on your timezone:
+
+| Routine | Default | Purpose |
+|---|---|---|
+| Daily focus | 09:00 daily | Active projects + tasks digest |
+| Weekly curator | Sunday 20:00 | Stale inbox, draft promotions, momentum |
+| Monthly audit | 1st of month | Project health + area coverage |
+| Quarterly review | Quarterly | Strategic synthesis: what shipped, what slipped |
+
+Plus one-shot reminders triggered by `/scribe` ("remind me Friday at 3pm to ..."). Edit `bot-data/schedules.json` to customize.
+
+---
+
+## What the bot itself can do (access surface)
+
+The Telegram interface accepts every media type and turns it into a Claude session:
+
+- 💬 Text, voice, photos, documents, audio, video — all flow through the same agent
+- 🔄 Session persistence — conversations continue across messages; `/resume` restores past sessions
+- 📨 Message queuing — send multiple while Claude works; prefix with `!` to interrupt
+- 🧠 Extended thinking — say "think" or "reason" to trigger Claude's reasoning mode
+- 🔘 Interactive buttons — Claude presents choices as tappable Telegram keyboards
+- 📎 File delivery — Claude sends files back via the chat
+- 🔔 Notifications — scheduled routines and reminders deliver as actionable Telegram messages
+
+---
+
+## Repo layout
+
+Three repos cloned side by side:
 
 ```bash
 git clone https://github.com/Ilyuha888/claude-telegram-bot ~/repos/claude-telegram-bot
 git clone https://github.com/Ilyuha888/ctb-vault          ~/repos/ctb-vault
-git clone https://github.com/Ilyuha888/bot-data            ~/repos/bot-data
+git clone https://github.com/Ilyuha888/bot-data           ~/repos/bot-data
 ```
 
-**`ctb-vault`** ships with the PARA folder structure, the V-A methodology spec (`meta/va-contract.md`), and optional scheduler prompt templates. You populate it with your own notes.
+- **`claude-telegram-bot`** (this repo) — bot code, Docker, scheduler runtime, MCP servers
+- **`ctb-vault`** — knowledge vault scaffold (PARA + V-A spec + PKM skills + scheduler prompt templates) — see [its own README](https://github.com/Ilyuha888/ctb-vault)
+- **`bot-data`** — example schedules + empty notification log; the bot reads/writes this at runtime; `sessions.json` is gitignored (conversation history stays personal)
 
-**`bot-data`** ships with example schedules. The bot reads and writes it at runtime. `sessions.json` is gitignored and never committed — it contains conversation history.
+The split lets each piece evolve independently: bot code on its own release cadence, vault under your control as your knowledge grows, runtime state isolated for backup and rotation.
 
 ---
 
