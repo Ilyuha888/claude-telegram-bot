@@ -57,6 +57,7 @@ function extractPath(input: Record<string, unknown>): string | null {
 
 function checkAutoApprove(toolName: string, input: Record<string, unknown>): boolean {
   if (toolName.startsWith("mcp__send-file")) return true;
+  if (toolName.startsWith("mcp__ask-user")) return true;
   if (WRITE_TOOLS.has(toolName) || toolName === "Read") {
     const p = extractPath(input);
     return p !== null && isPathAllowed(p);
