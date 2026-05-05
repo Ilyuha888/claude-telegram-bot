@@ -97,11 +97,24 @@ The bot uses your Claude Code subscription (most cost-effective) or an API key:
 ```bash
 # Option A — Claude Code CLI auth (recommended)
 # Run once on the host; auth state is stored in ~/.claude/
+# Docker mounts ~/.claude into the container, so this MUST run before
+# `docker compose up` for the container to inherit your login.
 claude
 
 # Option B — API key (set in .env, billed per token)
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
+
+**Where credentials live:**
+
+| Credential | Where | Lifetime | Rotate |
+|---|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | `.env` | Until revoked | `/revoke` in @BotFather, paste new token in `.env`, restart |
+| `TELEGRAM_ALLOWED_USERS` | `.env` | Permanent | Edit `.env`, restart |
+| Claude CLI auth | `~/.claude/` (host) | Subscription session | Re-run `claude` on the host |
+| `ANTHROPIC_API_KEY` | `.env` | Until deleted in console | Replace key in `.env`, restart |
+| `OPENAI_API_KEY` | `.env` | Until deleted in console | Replace key in `.env`, restart |
+| Google MCP auth | claude.ai session | Session-scoped | Re-auth via `/mcp` on claude.ai |
 
 **4. Start**
 
@@ -153,6 +166,26 @@ launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 ```bash
 sudo systemctl restart claude-telegram-bot
 ```
+
+### Persistent operation: sleep, restart, lifecycle
+
+This bot is designed for 24/7 server operation (Linux + systemd, or a small VPS running Docker). Running on a Mac laptop works but has caveats.
+
+**On Mac sleep:**
+- Bot process is paused. Telegram polling stops.
+- Telegram queues incoming messages on its server for **~24 hours** — they'll be delivered when the bot wakes up.
+- Scheduled routines (daily focus, weekly curator, etc.) miss their fire times during sleep, but the bot has **catch-up logic**: on wake, it reads `last_fired` from `bot-data/schedules.json` and fires anything that became due while asleep.
+- One-shot reminders queued via `/scribe` ("remind me tomorrow at 9am") survive sleep — they're stored in `schedules.json` and fire on the first wake after the due time.
+
+**On Mac restart / shutdown:**
+- launchd (with the plist above) auto-restarts the bot on login. `RunAtLoad` + `KeepAlive` are set in the template.
+- In-flight Claude sessions are lost; resume via `/resume` once the bot is back.
+
+**To prevent sleep while bot is running on Mac:**
+- System Settings → Battery → Options → "Prevent automatic sleeping when the display is off" (only effective on power adapter)
+- Or run `caffeinate -d` in a terminal as long as you want sleep blocked
+
+**For 24/7 reliability**, run the bot on a Linux VPS (Hetzner, DigitalOcean, etc.) with Docker or systemd. The repo ships with both `docker-compose.yml` and a systemd-friendly layout for this case.
 
 ---
 
