@@ -19,19 +19,21 @@ export const MCP_SERVERS: Record<
   | { command: string; args?: string[]; env?: Record<string, string> }
   | { type: "http"; url: string; headers?: Record<string, string> }
 > = {
-  // Ask User - present options as Telegram inline keyboard buttons
-  // Uncomment to enable interactive button prompts
-  // "ask-user": {
-  //   command: "bun",
-  //   args: ["run", `${REPO_ROOT}/ask_user_mcp/server.ts`]
-  // },
+  // Ask User - present options as Telegram inline keyboard buttons.
+  // Built-in; required for the /scribe commit-confirm flow and for any
+  // skill that asks the user a multiple-choice question.
+  "ask-user": {
+    command: "bun",
+    args: ["run", `${REPO_ROOT}/ask_user_mcp/server.ts`],
+  },
 
-  // Send File - send files (images, videos, audio, documents) back to the user
-  // Uncomment to enable file delivery via Telegram
-  // "send-file": {
-  //   command: "bun",
-  //   args: ["run", `${REPO_ROOT}/send_file_mcp/server.ts`]
-  // },
+  // Send File - send files (images, videos, audio, documents) back to the user.
+  // Built-in; required when you ask the bot to "send me back the file" or
+  // when a skill needs to deliver a generated artifact.
+  "send-file": {
+    command: "bun",
+    args: ["run", `${REPO_ROOT}/send_file_mcp/server.ts`],
+  },
 
   // Example: Typefully - draft and schedule social posts
   // Docs: https://support.typefully.com/en/articles/13128440-typefully-mcp-server

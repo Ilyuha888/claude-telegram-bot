@@ -160,16 +160,19 @@ sudo systemctl restart claude-telegram-bot
 | `ALLOWED_PATHS` | | Comma-separated dirs Claude can access (overrides defaults; include `~/.claude`) |
 | `TZ` | | Timezone for scheduler (default: `Europe/Moscow`) |
 
-### MCP servers (optional)
+### MCP servers
 
 ```bash
 cp mcp-config.example.ts mcp-config.ts
-# Edit mcp-config.ts with your MCP servers
+# Edit mcp-config.ts to add your own MCP servers
 ```
 
-Built-in MCP servers (always active):
-- **`ask_user`** — presents options as Telegram inline keyboard buttons
-- **`send_file`** — sends files back to the chat
+This step is required — without `mcp-config.ts`, Claude has no MCP tools at all. The example ships with two built-in servers enabled by default:
+
+- **`ask-user`** — presents options as Telegram inline keyboard buttons (powers the `/scribe` commit-confirm flow)
+- **`send-file`** — sends files (images, videos, audio, documents) back to the chat
+
+Comment them out if you don't want them. Add your own MCP servers (Things, Notion, Typefully, etc.) to give Claude access to your tools.
 
 ### Google MCPs (optional)
 
