@@ -10,13 +10,15 @@ import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 
 const SETTINGS_PATH = `${homedir()}/.claude/settings.json`;
+const SETTINGS_EXISTS = existsSync(SETTINGS_PATH);
 
 function loadAllowlist(): string[] {
+  if (!SETTINGS_EXISTS) return [];
   const cfg = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8"));
   return cfg?.permissions?.allow ?? [];
 }
 
-describe("settings.json allowlist", () => {
+describe.skipIf(!SETTINGS_EXISTS)("settings.json allowlist", () => {
   const allow = loadAllowlist();
 
   const required = [
