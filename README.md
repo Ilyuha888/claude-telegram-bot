@@ -118,7 +118,19 @@ The container mounts `~/bot-data`, `~/ctb-vault`, and `~/.claude` (read-only, fo
 
 If you prefer running without Docker:
 
-**Prerequisites:** Bun 1.3+, Claude Code CLI, `pdftotext` (`brew install poppler` / `apt install poppler-utils`).
+**Prerequisites:** Bun 1.3+, Claude Code CLI, `pdftotext`.
+
+```bash
+# Bun
+curl -fsSL https://bun.sh/install | bash
+
+# Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# pdftotext
+brew install poppler        # macOS
+sudo apt install poppler-utils   # Debian/Ubuntu
+```
 
 ```bash
 cd ~/repos/claude-telegram-bot
@@ -158,7 +170,7 @@ sudo systemctl restart claude-telegram-bot
 | `CTB_VAULT_DIR` | | Path to your vault (scheduler prompts default to `~/repos/ctb-vault`) |
 | `BOT_DATA_DIR` | | Path to bot-data dir (default: `~/bot-data`) |
 | `ALLOWED_PATHS` | | Comma-separated dirs Claude can access (overrides defaults; include `~/.claude`) |
-| `TZ` | | Timezone for scheduler (default: `Europe/Moscow`) |
+| `TZ` | | Timezone for scheduler (default: `Europe/Moscow`; set to your own, e.g. `America/Los_Angeles`, `Europe/Berlin`, `Asia/Tokyo`) |
 
 ### MCP servers
 
