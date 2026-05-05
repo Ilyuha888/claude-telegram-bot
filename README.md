@@ -179,7 +179,8 @@ This bot is designed for 24/7 server operation (Linux + systemd, or a small VPS 
 
 **On Mac restart / shutdown:**
 - launchd (with the plist above) auto-restarts the bot on login. `RunAtLoad` + `KeepAlive` are set in the template.
-- In-flight Claude sessions are lost; resume via `/resume` once the bot is back.
+- Past sessions are restored — chat session history lives in `${BOT_DATA_DIR}/chat-session-history.json`, which survives reboots. The bot auto-resumes the most recent session on the next message, or use `/resume` to pick from the last 5.
+- A single in-flight Claude stream (if the bot was actively replying when the host went down) is interrupted; just send the message again.
 
 **To prevent sleep while bot is running on Mac:**
 - System Settings → Battery → Options → "Prevent automatic sleeping when the display is off" (only effective on power adapter)
@@ -282,7 +283,7 @@ Protections:
 3. **Path validation** — file access restricted to `ALLOWED_PATHS`
 4. **Command safety** — patterns like `rm -rf /` are blocked
 5. **Rate limiting** — prevents runaway usage
-6. **Audit logging** — all interactions logged to `/tmp/claude-telegram-audit.log`
+6. **Audit logging** — all interactions logged to `${BOT_DATA_DIR}/audit.log`
 
 ---
 

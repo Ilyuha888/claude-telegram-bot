@@ -130,7 +130,7 @@ This is the primary protection layer. The other layers are defense-in-depth.
 All interactions are logged for security review.
 
 ```
-Log location: /tmp/claude-telegram-audit.log (configurable)
+Log location: ${BOT_DATA_DIR}/audit.log (configurable)
 ```
 
 Logged events:
@@ -164,7 +164,7 @@ If you suspect unauthorized access:
 
 1. **Stop the bot**: `launchctl unload ~/Library/LaunchAgents/com.claude-telegram-ts.plist`
 2. **Revoke the Telegram bot token**: Message @BotFather and create a new token
-3. **Review audit logs**: Check `/tmp/claude-telegram-audit.log`
+3. **Review audit logs**: Check `${BOT_DATA_DIR}/audit.log`
 4. **Check for file changes**: Review recent activity in allowed directories
 5. **Update credentials**: Rotate any API keys that may have been exposed
 

@@ -25,7 +25,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 
 - **`src/index.ts`** - Entry point, registers handlers, starts polling
 - **`src/config.ts`** - Environment parsing, MCP loading, safety prompts
-- **`src/session.ts`** - `ClaudeSession` class wrapping Agent SDK V2 with streaming, session persistence (`/tmp/claude-telegram-session.json`), and defense-in-depth safety checks
+- **`src/session.ts`** - `ClaudeSession` class wrapping Agent SDK V2 with streaming, session persistence (`${BOT_DATA_DIR}/chat-session-history.json`), and defense-in-depth safety checks
 - **`src/security.ts`** - `RateLimiter` (token bucket), path validation, command safety checks
 - **`src/formatting.ts`** - Markdown→HTML conversion for Telegram, tool status emoji formatting
 - **`src/utils.ts`** - Audit logging, voice transcription (OpenAI), typing indicators
@@ -77,9 +77,9 @@ MCP servers defined in `mcp-config.ts`.
 
 ### Runtime Files
 
-- `/tmp/claude-telegram-session.json` - Session persistence for `/resume`
+- `${BOT_DATA_DIR}/chat-session-history.json` - Session persistence for `/resume` (survives host reboots)
 - `/tmp/telegram-bot/` - Downloaded photos/documents
-- `/tmp/claude-telegram-audit.log` - Audit log
+- `${BOT_DATA_DIR}/audit.log` - Audit log (survives host reboots; configurable via `AUDIT_LOG_PATH`)
 - `bot-data/schedules.json` - Scheduler registry: cron expressions, `last_fired`, one-shot remind entries
 - `bot-data/notifications.json` - Delivered notification history (content, status, Telegram message metadata)
 

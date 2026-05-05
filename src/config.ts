@@ -243,7 +243,7 @@ export const BUTTON_LABEL_MAX_LENGTH = 30; // Max chars for inline button labels
 // ============== Audit Logging ==============
 
 export const AUDIT_LOG_PATH =
-  process.env.AUDIT_LOG_PATH || "/tmp/claude-telegram-audit.log";
+  process.env.AUDIT_LOG_PATH || `${BOT_DATA_DIR}/audit.log`;
 export const AUDIT_LOG_JSON =
   (process.env.AUDIT_LOG_JSON || "false").toLowerCase() === "true";
 
@@ -262,7 +262,11 @@ export const RATE_LIMIT_WINDOW = parseInt(
 
 // ============== File Paths ==============
 
-export const SESSION_FILE = "/tmp/claude-telegram-session.json";
+// SESSION_FILE moved from /tmp to BOT_DATA_DIR so chat session history
+// survives host reboots (and Docker container rebuilds, which destroy /tmp
+// inside the container). Required for /resume and tryAutoResume() to keep
+// working after a reboot.
+export const SESSION_FILE = `${BOT_DATA_DIR}/chat-session-history.json`;
 export const AUTO_RESUME_TTL_MS = parseInt(process.env.AUTO_RESUME_TTL_HOURS || "24", 10) * 60 * 60 * 1000;
 export const RESTART_FILE = "/tmp/claude-telegram-restart.json";
 export const TEMP_DIR = "/tmp/telegram-bot";
