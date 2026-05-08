@@ -13,7 +13,8 @@ function enqueue<T>(fn: () => Promise<T>): Promise<T> {
 async function load(): Promise<SchedulesFile> {
   try {
     const raw = await readFile(SCHEDULES_FILE, "utf-8");
-    return JSON.parse(raw) as SchedulesFile;
+    const parsed = JSON.parse(raw) as SchedulesFile;
+    return migrate(parsed);
   } catch (e: unknown) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") {
       return { schedules: [] };
@@ -27,6 +28,32 @@ async function load(): Promise<SchedulesFile> {
     console.error(`[schedules-store] corrupted, backed up to ${corrupted}`);
     return { schedules: [] };
   }
+}
+
+/**
+ * One-shot schedules used to abuse `last_fired` as the fire-at timestamp.
+ * The new schema has a dedicated `fire_at` field. Migrate any legacy row
+ * (one_shot && last_fired && !fire_at) and persist if anything changed.
+ * Idempotent: subsequent loads find nothing to migrate.
+ */
+function migrate(data: SchedulesFile): SchedulesFile {
+  let changed = false;
+  for (const s of data.schedules) {
+    if (s.one_shot && s.last_fired && !s.fire_at) {
+      s.fire_at = s.last_fired;
+      s.last_fired = null;
+      changed = true;
+    }
+  }
+  if (changed) {
+    // Persist the migration so future loads don't repeat the work. Fire-and-forget
+    // because save() is async and load() is called from inside the enqueue lock.
+    save(data).catch((err) =>
+      console.error("[schedules-store] migration save failed:", err),
+    );
+    console.log("[schedules-store] migrated legacy one-shots last_fired → fire_at");
+  }
+  return data;
 }
 
 async function save(data: SchedulesFile): Promise<void> {

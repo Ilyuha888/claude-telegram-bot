@@ -30,8 +30,14 @@ export type Schedule = {
   cron: string;
   tz: string;
   prompt_key: string;
+  /** When this cron schedule last fired. Null on first seed; updated by touch().
+   * Not used for one-shots — see fire_at instead. */
   last_fired: string | null;
   one_shot?: boolean;
+  /** When a one_shot schedule should fire (ISO 8601). Required for one_shot,
+   * unused for cron. Older one-shots that stored their fire-at in last_fired
+   * are migrated on load by schedules-store.load(). */
+  fire_at?: string;
   payload?: {
     notification_id?: string;   // [Remind later] re-surfaces an existing notification
     reminder_message?: string;  // Scribe-created reminder — direct Telegram alert

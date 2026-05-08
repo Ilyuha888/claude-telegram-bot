@@ -1,12 +1,3 @@
 {
-  "mcpServers": {
-    "haft": {
-      "command": "haft",
-      "args": [
-        "serve"
-      ],
-      "env": {}
-
-    }
-  }
+  "mcpServers": {}
 }

@@ -69,21 +69,42 @@ export const CLAUDE_CLI_PATH = findClaudeCli();
 
 // ============== MCP Configuration ==============
 
-// MCP servers loaded from mcp-config.ts
-let MCP_SERVERS: Record<string, McpServerConfig> = {};
+const REPO_ROOT = dirname(import.meta.dir);
+
+// Built-in MCP servers shipped with the bot. Always registered, regardless of
+// whether mcp-config.ts exists, because the bot's permission/auto-approve and
+// post-tool hooks reference these tool names directly (see src/session.ts).
+const BUILTIN_MCP_SERVERS: Record<string, McpServerConfig> = {
+  "ask-user": {
+    command: "bun",
+    args: ["run", `${REPO_ROOT}/ask_user_mcp/server.ts`],
+  },
+  "send-file": {
+    command: "bun",
+    args: ["run", `${REPO_ROOT}/send_file_mcp/server.ts`],
+  },
+};
+
+let MCP_SERVERS: Record<string, McpServerConfig> = { ...BUILTIN_MCP_SERVERS };
 
 try {
-  // Dynamic import of MCP config
-  const mcpConfigPath = resolve(dirname(import.meta.dir), "mcp-config.ts");
+  const mcpConfigPath = resolve(REPO_ROOT, "mcp-config.ts");
   const mcpModule = await import(mcpConfigPath).catch(() => null);
+  const builtinCount = Object.keys(BUILTIN_MCP_SERVERS).length;
   if (mcpModule?.MCP_SERVERS) {
-    MCP_SERVERS = mcpModule.MCP_SERVERS;
+    // User config merges on top of built-ins (can override by re-defining the same key).
+    MCP_SERVERS = { ...MCP_SERVERS, ...mcpModule.MCP_SERVERS };
+    const userCount = Object.keys(mcpModule.MCP_SERVERS).length;
     console.log(
-      `Loaded ${Object.keys(MCP_SERVERS).length} MCP servers from mcp-config.ts`
+      `Loaded ${builtinCount} built-in + ${userCount} user MCP server(s)`,
     );
+  } else {
+    console.log(`Loaded ${builtinCount} built-in MCP server(s) (no user mcp-config.ts)`);
   }
-} catch {
-  console.log("No mcp-config.ts found - running without MCPs");
+} catch (err) {
+  console.log(
+    `Loaded ${Object.keys(BUILTIN_MCP_SERVERS).length} built-in MCP server(s) (mcp-config.ts load failed: ${err})`,
+  );
 }
 
 export { MCP_SERVERS };
@@ -152,7 +173,7 @@ ${pathsList}
    - /retriever: whenever the user asks about personal knowledge or searches their vault. Triggers: "what do I know about", "have I thought about", "do I have notes on", "find my notes on", "search my vault", "what did I capture about", or any intent to retrieve personal knowledge.
    - /curator: whenever the user wants a vault health check. Triggers: "what needs attention", "what's stale", "vault health", "clean up my vault", "curation report", or asks for an overview of vault state.
 
-7. REMINDER MECHANISM — the ONLY way to set a reminder that will be delivered via this Telegram bot is to write an entry directly to ${BOT_DATA_DIR}/schedules.json using this exact script:
+7. REMINDER MECHANISM — the ONLY way to set a reminder that will be delivered via this Telegram bot is to write an entry directly to ${BOT_DATA_DIR}/schedules.json using this exact script. Use the field name \`fire_at\` for when the reminder should fire — \`last_fired\` is for cron schedules only and must stay null on one-shots.
    bun -e "
    const fs = require('fs');
    const path = '${BOT_DATA_DIR}/schedules.json';
@@ -162,7 +183,8 @@ ${pathsList}
      cron: '',
      tz: 'Europe/Moscow',
      prompt_key: 'scribe_reminder',
-     last_fired: 'FIRE_AT_ISO',
+     last_fired: null,
+     fire_at: 'FIRE_AT_ISO',
      one_shot: true,
      payload: { reminder_message: 'REMINDER_TEXT', note_path: 'NOTE_PATH' }
    });

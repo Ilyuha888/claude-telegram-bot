@@ -24,6 +24,9 @@ export interface SavedSession {
   saved_at: string;
   working_dir: string;
   title: string; // First message truncated (max ~50 chars)
+  /** True if the last SDK result event for this session was an error.
+   * The auto-resume picker skips entries with errored: true. */
+  errored?: boolean;
 }
 
 export interface SessionHistory {

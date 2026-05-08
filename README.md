@@ -275,17 +275,21 @@ This bot is designed for 24/7 server operation (Linux + systemd, or a small VPS 
 
 ### MCP servers
 
-```bash
-cp mcp-config.example.ts mcp-config.ts
-# Edit mcp-config.ts to add your own MCP servers
-```
-
-This step is required — without `mcp-config.ts`, Claude has no MCP tools at all. The example ships with two built-in servers enabled by default:
+Two built-in MCP servers ship with the bot and are **always loaded**, no setup required:
 
 - **`ask-user`** — presents options as Telegram inline keyboard buttons (powers the `/scribe` commit-confirm flow)
 - **`send-file`** — sends files (images, videos, audio, documents) back to the chat
 
-Comment them out if you don't want them. Add your own MCP servers (Things, Notion, Typefully, etc.) to give Claude access to your tools.
+These are wired in `src/config.ts` (`BUILTIN_MCP_SERVERS`); the implementations live in `ask_user_mcp/server.ts` and `send_file_mcp/server.ts`.
+
+To add **personal** MCP servers (haft, Things, Notion, Typefully, etc.):
+
+```bash
+cp mcp-config.example.ts mcp-config.ts
+# Uncomment what you want; user entries merge on top of the built-ins.
+```
+
+This file is optional — the bot runs fine without it.
 
 ### Google MCPs (optional)
 
@@ -311,6 +315,8 @@ The bot fires four built-in routines on the schedule defined in `bot-data/schedu
 | Quarterly review | Quarterly | Strategic synthesis |
 
 Edit `schedules.json` to change times or disable routines. The bot picks up changes without restart.
+
+> **First boot is quiet.** A fresh install seeds each schedule's `last_fired` to "now" so no routine fires immediately on first launch. The first real fire happens at the next cron tick (e.g. 09:00 MSK for daily focus). To force a catch-up for testing, backdate `last_fired` past the cadence window (23h for daily, 8d for weekly, etc.) and restart.
 
 ### PKM slash commands
 
