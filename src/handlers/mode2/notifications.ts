@@ -4,20 +4,30 @@ import { session } from "../../session";
 import { escapeHtml, convertMarkdownToHtml } from "../../formatting";
 import * as notifStore from "../../mode2/notifications-store";
 import * as schedulesStore from "../../mode2/schedules-store";
-import { scheduleOneShot } from "../../scheduler";
+import { scheduleOneShot, notificationKeyboard } from "../../scheduler";
 import type { Schedule } from "../../mode2/types";
 import { StreamingState, createStatusCallback } from "../streaming";
 import { startTypingIndicator } from "../../utils";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function notificationKeyboard(notifId: string): InlineKeyboard {
+const REMINDER_DURATIONS: Record<string, { label: string; ms: number }> = {
+  "1h": { label: "1 hour",  ms:        60 * 60 * 1000 },
+  "6h": { label: "6 hours", ms:    6 * 60 * 60 * 1000 },
+  "1d": { label: "1 day",   ms:   24 * 60 * 60 * 1000 },
+  "1w": { label: "1 week",  ms: 7 * 24 * 60 * 60 * 1000 },
+};
+
+function reminderPickerKeyboard(notifId: string, source?: string): InlineKeyboard {
+  const suffix = source ? `:${source}` : "";
   return new InlineKeyboard()
-    .text("Show", `notif:show:${notifId}`)
-    .text("New session", `notif:new:${notifId}`)
+    .text("1 hour",  `notif:remind-set:${notifId}:1h${suffix}`)
+    .text("6 hours", `notif:remind-set:${notifId}:6h${suffix}`)
     .row()
-    .text("Delete", `notif:del:${notifId}`)
-    .text("Remind later", `notif:remind:${notifId}`);
+    .text("1 day",   `notif:remind-set:${notifId}:1d${suffix}`)
+    .text("1 week",  `notif:remind-set:${notifId}:1w${suffix}`)
+    .row()
+    .text("‹ Cancel", `notif:remind-cancel:${notifId}${suffix}`);
 }
 
 function relativeTime(isoOrNull: string | null): string {
@@ -97,11 +107,13 @@ export async function handleNotificationCallback(ctx: Context): Promise<void> {
   }
 
   switch (action) {
-    case "show":      if (arg) return handleShow(ctx, arg); break;
-    case "new":       if (arg) return handleNewSession(ctx, arg); break;
-    case "del":       if (arg) return handleDelete(ctx, arg, parts[3]); break;
-    case "remind":    if (arg) return handleRemindLater(ctx, arg, parts[3]); break;
-    case "sched-del": if (arg) return handleSchedDel(ctx, arg); break;
+    case "show":          if (arg) return handleShow(ctx, arg); break;
+    case "new":           if (arg) return handleNewSession(ctx, arg); break;
+    case "del":           if (arg) return handleDelete(ctx, arg, parts[3]); break;
+    case "remind":        if (arg) return handleRemindLater(ctx, arg, parts[3]); break;
+    case "remind-set":    if (arg && parts[3]) return handleRemindSet(ctx, arg, parts[3], parts[4]); break;
+    case "remind-cancel": if (arg) return handleRemindCancel(ctx, arg, parts[3]); break;
+    case "sched-del":     if (arg) return handleSchedDel(ctx, arg); break;
     case "tab":
       if (arg === "fired") return renderFiredTab(ctx);
       return renderScheduledTab(ctx);
@@ -322,8 +334,36 @@ async function handleRemindLater(
     return;
   }
 
+  // Render a duration picker rather than scheduling immediately. The picker
+  // keyboard's buttons all hit notif:remind-set with the chosen duration.
+  await ctx.answerCallbackQuery();
+  await editOrReply(
+    ctx,
+    `🔔 <b>${escapeHtml(notif.title)}</b>\n\nRemind me in:`,
+    reminderPickerKeyboard(notifId, source),
+  );
+}
+
+async function handleRemindSet(
+  ctx: Context,
+  notifId: string,
+  duration: string,
+  source?: string,
+): Promise<void> {
+  const spec = REMINDER_DURATIONS[duration];
+  if (!spec) {
+    await ctx.answerCallbackQuery({ text: "Unknown duration" });
+    return;
+  }
+
+  const notif = await notifStore.get(notifId);
+  if (!notif || notif.status === "deleted") {
+    await ctx.answerCallbackQuery({ text: "Notification not found" });
+    return;
+  }
+
   const remindId = `remind-${crypto.randomUUID().slice(0, 8)}`;
-  const fireAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const fireAt = new Date(Date.now() + spec.ms).toISOString();
 
   const schedule: Schedule = {
     id: remindId,
@@ -336,19 +376,48 @@ async function handleRemindLater(
   };
   await scheduleOneShot(schedule);
 
-  // From the menu, pop back to the Fired tab so the user can keep clearing
-  // the backlog. From a direct notification message, keep the existing
-  // "reminder set for 1h" terminal.
   if (source === "menu") {
-    await ctx.answerCallbackQuery({ text: "Will remind in 1 hour" });
+    await ctx.answerCallbackQuery({ text: `Will remind in ${spec.label}` });
     return renderFiredTab(ctx);
   }
 
-  await ctx.answerCallbackQuery({ text: "Will remind in 1 hour" });
+  await ctx.answerCallbackQuery({ text: `Will remind in ${spec.label}` });
   try {
     await ctx.editMessageText(
-      `🔔 <b>${escapeHtml(notif.title)}</b> — reminder set for 1h`,
+      `🔔 <b>${escapeHtml(notif.title)}</b> — reminder set for ${spec.label}`,
       { parse_mode: "HTML", reply_markup: new InlineKeyboard() },
+    );
+  } catch { /* non-critical */ }
+}
+
+async function handleRemindCancel(
+  ctx: Context,
+  notifId: string,
+  source?: string,
+): Promise<void> {
+  await ctx.answerCallbackQuery();
+
+  // From the menu, return to the show view. From a direct notification
+  // message, restore the original notification keyboard so the user can
+  // pick again (or hit Show / Delete instead).
+  if (source === "menu") {
+    return handleShow(ctx, notifId);
+  }
+
+  const notif = await notifStore.get(notifId);
+  if (!notif || notif.status === "deleted") return;
+
+  // Match the original prefix so the message looks unchanged after Cancel.
+  // Scribe reminders are surfaced as "⏰ Reminder", routine notifications as
+  // "📬 Notification" (see scheduler.ts:fire and fireReminder).
+  const prefix = notif.prompt_key === "scribe_reminder"
+    ? "⏰ <b>Reminder</b> ·"
+    : "📬 <b>Notification</b> ·";
+
+  try {
+    await ctx.editMessageText(
+      `${prefix} ${escapeHtml(notif.title)}`,
+      { parse_mode: "HTML", reply_markup: notificationKeyboard(notifId) },
     );
   } catch { /* non-critical */ }
 }

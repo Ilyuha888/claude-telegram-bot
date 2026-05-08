@@ -44,7 +44,12 @@ async function waitForIdle(maxWaitMs = 60_000): Promise<void> {
   }
 }
 
-function notificationKeyboard(notifId: string): InlineKeyboard {
+/**
+ * Default keyboard for a freshly-fired notification message in Telegram.
+ * Exported so handleRemindCancel can restore it after the user backs out
+ * of the duration picker.
+ */
+export function notificationKeyboard(notifId: string): InlineKeyboard {
   return new InlineKeyboard()
     .text("Show", `notif:show:${notifId}`)
     .text("New session", `notif:new:${notifId}`)
