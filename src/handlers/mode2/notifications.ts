@@ -100,7 +100,7 @@ export async function handleNotificationCallback(ctx: Context): Promise<void> {
     case "show":      if (arg) return handleShow(ctx, arg); break;
     case "new":       if (arg) return handleNewSession(ctx, arg); break;
     case "del":       if (arg) return handleDelete(ctx, arg, parts[3]); break;
-    case "remind":    if (arg) return handleRemindLater(ctx, arg); break;
+    case "remind":    if (arg) return handleRemindLater(ctx, arg, parts[3]); break;
     case "sched-del": if (arg) return handleSchedDel(ctx, arg); break;
     case "tab":
       if (arg === "fired") return renderFiredTab(ctx);
@@ -213,14 +213,14 @@ async function handleShow(ctx: Context, notifId: string): Promise<void> {
     : notif.content;
 
   const body = convertMarkdownToHtml(truncated);
-  // Delete from the menu's show-view returns to the fired list so the user
-  // can keep working through their backlog. The :menu suffix is read by
-  // handleDelete to switch the post-delete behaviour.
+  // Delete and Remind later from the menu's show-view return to the fired
+  // list so the user can keep working through their backlog. The :menu
+  // suffix is read by the respective handlers to switch behaviour.
   const keyboard = new InlineKeyboard()
     .text("New session", `notif:new:${notifId}`)
     .text("Delete", `notif:del:${notifId}:menu`)
     .row()
-    .text("Remind later", `notif:remind:${notifId}`)
+    .text("Remind later", `notif:remind:${notifId}:menu`)
     .row()
     .text("‹ Back", "notif:tab:fired");
 
@@ -311,7 +311,11 @@ async function handleDelete(
   } catch { /* non-critical */ }
 }
 
-async function handleRemindLater(ctx: Context, notifId: string): Promise<void> {
+async function handleRemindLater(
+  ctx: Context,
+  notifId: string,
+  source?: string,
+): Promise<void> {
   const notif = await notifStore.get(notifId);
   if (!notif || notif.status === "deleted") {
     await ctx.answerCallbackQuery({ text: "Notification not found" });
@@ -332,8 +336,15 @@ async function handleRemindLater(ctx: Context, notifId: string): Promise<void> {
   };
   await scheduleOneShot(schedule);
 
-  await ctx.answerCallbackQuery({ text: "Will remind in 1 hour" });
+  // From the menu, pop back to the Fired tab so the user can keep clearing
+  // the backlog. From a direct notification message, keep the existing
+  // "reminder set for 1h" terminal.
+  if (source === "menu") {
+    await ctx.answerCallbackQuery({ text: "Will remind in 1 hour" });
+    return renderFiredTab(ctx);
+  }
 
+  await ctx.answerCallbackQuery({ text: "Will remind in 1 hour" });
   try {
     await ctx.editMessageText(
       `🔔 <b>${escapeHtml(notif.title)}</b> — reminder set for 1h`,
