@@ -18,10 +18,16 @@ services:
       # Knowledge vault — clone https://github.com/Ilyuha888/ctb-vault or use your own vault
       - ${CTB_VAULT_DIR:-../ctb-vault}:/data/vault
 
-      # Claude CLI auth + user settings + skills
-      # The container reads ANTHROPIC_API_KEY from .env for authentication.
-      # Mount your ~/.claude/ to bring in skills, hooks, and custom settings.
-      - ${HOME}/.claude:/root/.claude:ro
+      # Claude CLI auth + user settings + skills.
+      # NOT read-only: Claude Code writes per-session transcripts to
+      # ~/.claude/projects/<project-dir>/<session-id>.jsonl. Without write
+      # access, every second message fails with "No conversation found
+      # with session ID: …" because the resume target was never persisted.
+      # The container only writes under projects/<the-vault-path>/, a
+      # different subfolder from anything a host-side claude session would
+      # touch (host = projects/-Users-…-ctb-vault; container =
+      # projects/-data-vault), so the two co-exist cleanly.
+      - ${HOME}/.claude:/root/.claude
 
       # Temp files (voice, photos, documents)
       - /tmp/telegram-bot:/tmp/telegram-bot

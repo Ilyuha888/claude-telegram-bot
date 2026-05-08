@@ -38,4 +38,11 @@ COPY . .
 ENV BOT_DATA_DIR=/data/bot-data
 ENV CTB_VAULT_DIR=/data/vault
 
+# Force the Agent SDK to spawn the globally-installed Claude CLI rather than
+# the variant-specific binary it tries to bundle under
+# node_modules/@anthropic-ai/claude-agent-sdk-<platform>/claude. On a Debian
+# base bun's optional-deps resolver can pick the musl variant, which then
+# fails to start. Setting this env var bypasses that lookup entirely.
+ENV CLAUDE_CODE_PATH=/usr/bin/claude
+
 CMD ["bun", "run", "src/index.ts"]
