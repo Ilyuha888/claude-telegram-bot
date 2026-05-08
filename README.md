@@ -150,7 +150,7 @@ Edit `.env` — minimum required:
 
 ```bash
 TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF...
-TELEGRAM_ALLOWED_USERS=123456789          # your Telegram user ID
+TELEGRAM_ALLOWED_USER=123456789          # your Telegram user ID
 
 # Paths (used by docker-compose as host-side mount sources)
 BOT_DATA_DIR=../bot-data
@@ -177,7 +177,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-...
 | Credential | Where | Lifetime | Rotate |
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | `.env` | Until revoked | `/revoke` in @BotFather, paste new token in `.env`, restart |
-| `TELEGRAM_ALLOWED_USERS` | `.env` | Permanent | Edit `.env`, restart |
+| `TELEGRAM_ALLOWED_USER` | `.env` | Permanent | Edit `.env`, restart |
 | Claude CLI auth | `~/.claude/` (host) | Subscription session | Re-run `claude` on the host |
 | `ANTHROPIC_API_KEY` | `.env` | Until deleted in console | Replace key in `.env`, restart |
 | `OPENAI_API_KEY` | `.env` | Until deleted in console | Replace key in `.env`, restart |
@@ -264,7 +264,7 @@ This bot is designed for 24/7 server operation (Linux + systemd, or a small VPS 
 | Variable | Required | Description |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | ✅ | From @BotFather |
-| `TELEGRAM_ALLOWED_USERS` | ✅ | Comma-separated Telegram user IDs |
+| `TELEGRAM_ALLOWED_USER` | ✅ | Your Telegram user ID (single integer — bot is single-tenant per deployment) |
 | `ANTHROPIC_API_KEY` | if no CLI auth | Claude API key |
 | `OPENAI_API_KEY` | | Voice transcription (without it, voice messages won't work) |
 | `CLAUDE_WORKING_DIR` | | Where Claude runs — loads CLAUDE.md, skills, MCP config |
@@ -351,7 +351,7 @@ Natural-language intent routing is built in — you don't need to type the slash
 **→ [Read the full Security Model](SECURITY.md)**
 
 Protections:
-1. **User allowlist** — only your Telegram IDs can use the bot
+1. **User allowlist** — only your Telegram user ID can use the bot
 2. **Intent classification** — AI filter blocks dangerous requests
 3. **Path validation** — file access restricted to `ALLOWED_PATHS`
 4. **Command safety** — patterns like `rm -rf /` are blocked
@@ -375,7 +375,7 @@ After code changes on Linux with systemd: `sudo systemctl restart claude-telegra
 ## Troubleshooting
 
 **Bot doesn't respond**
-- Verify your user ID is in `TELEGRAM_ALLOWED_USERS`
+- Verify your user ID is in `TELEGRAM_ALLOWED_USER`
 - `docker compose logs -f` or `tail -f /tmp/claude-telegram-bot-ts.err`
 
 **Claude authentication issues**

@@ -58,7 +58,7 @@ Each message type has a dedicated async handler:
 
 ### Security Layers
 
-1. User allowlist (`TELEGRAM_ALLOWED_USERS`)
+1. User allowlist (`TELEGRAM_ALLOWED_USER`)
 2. Rate limiting (token bucket, configurable)
 3. Path validation (`ALLOWED_PATHS`)
 4. Command safety (blocked patterns)
@@ -68,7 +68,7 @@ Each message type has a dedicated async handler:
 ### Configuration
 
 All config via `.env` (copy from `.env.example`). Key variables:
-- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` (required)
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER` (required)
 - `CLAUDE_WORKING_DIR` - Working directory for Claude
 - `ALLOWED_PATHS` - Directories Claude can access
 - `OPENAI_API_KEY` - For voice transcription

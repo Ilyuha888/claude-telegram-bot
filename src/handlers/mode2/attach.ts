@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { ALLOWED_USERS } from "../../config";
+import { ALLOWED_USER } from "../../config";
 import { isAuthorized } from "../../security";
 import { auditLog } from "../../utils";
 import { escapeHtml } from "../../formatting";
@@ -8,7 +8,7 @@ import * as sh from "../../mode2/sh";
 
 function checkAuth(ctx: Context): boolean {
   const userId = ctx.from?.id;
-  return !!(userId && isAuthorized(userId, ALLOWED_USERS));
+  return !!(userId && isAuthorized(userId, ALLOWED_USER));
 }
 
 export async function handleAttach(ctx: Context): Promise<void> {

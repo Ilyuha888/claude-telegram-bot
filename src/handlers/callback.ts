@@ -10,7 +10,7 @@ import { unlinkSync } from "fs";
 import { session } from "../session";
 import { resolvePermissionRequest } from "./permission";
 import { resolveQuestionRequest } from "./question";
-import { ALLOWED_USERS } from "../config";
+import { ALLOWED_USER } from "../config";
 import { isAuthorized } from "../security";
 import { handleSessions, handleRepos, handleWork, handleClose, handleMode2Callback } from "./mode2";
 import { handleNotificationCallback } from "./mode2/notifications";
@@ -32,7 +32,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   }
 
   // 1. Authorization check
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.answerCallbackQuery({ text: "Unauthorized" });
     return;
   }

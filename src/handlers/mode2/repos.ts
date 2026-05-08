@@ -1,12 +1,12 @@
 import type { Context } from "grammy";
-import { ALLOWED_USERS, REPOS_DIR } from "../../config";
+import { ALLOWED_USER, REPOS_DIR } from "../../config";
 import { isAuthorized } from "../../security";
 import { escapeHtml } from "../../formatting";
 import { listRepos } from "../../mode2/repos";
 
 function checkAuth(ctx: Context): boolean {
   const userId = ctx.from?.id;
-  return !!(userId && isAuthorized(userId, ALLOWED_USERS));
+  return !!(userId && isAuthorized(userId, ALLOWED_USER));
 }
 
 export async function handleRepos(ctx: Context): Promise<void> {

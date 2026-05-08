@@ -4,7 +4,7 @@ import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import { resolve, join } from "path";
 import { access } from "fs/promises";
-import { ALLOWED_USERS, REPOS_DIR } from "../../config";
+import { ALLOWED_USER, REPOS_DIR } from "../../config";
 import { isAuthorized, isPathAllowed } from "../../security";
 import { auditLog } from "../../utils";
 import { escapeHtml } from "../../formatting";
@@ -19,7 +19,7 @@ import { renderNotificationsTab } from "./notifications";
 
 function checkAuth(ctx: Context): boolean {
   const userId = ctx.from?.id;
-  return !!(userId && isAuthorized(userId, ALLOWED_USERS));
+  return !!(userId && isAuthorized(userId, ALLOWED_USER));
 }
 
 // ── Keyboards ────────────────────────────────────────────────────────────────

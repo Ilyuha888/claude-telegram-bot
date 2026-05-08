@@ -28,7 +28,7 @@ jobs:
         env:
           # Tests use ALLOWED_PATHS from config; provide a minimal valid config
           TELEGRAM_BOT_TOKEN: "0:test"
-          TELEGRAM_ALLOWED_USERS: "0"
+          TELEGRAM_ALLOWED_USER: "0"
 
   docker:
     runs-on: ubuntu-latest
@@ -55,7 +55,7 @@ jobs:
           # If the container fails to start (Dockerfile bug), this fails.
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN="0000000000:AAINVALID-CI-TOKEN" \
-            -e TELEGRAM_ALLOWED_USERS="0" \
+            -e TELEGRAM_ALLOWED_USER="0" \
             -e BOT_DATA_DIR="/tmp/bot-data" \
             -e CTB_VAULT_DIR="/tmp/vault" \
             --entrypoint sh \
@@ -91,7 +91,7 @@ jobs:
         run: |
           cat > .env <<EOF
           TELEGRAM_BOT_TOKEN=${{ secrets.CI_TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_ALLOWED_USERS=1
+          TELEGRAM_ALLOWED_USER=1
           EOF
           # The actions log auto-masks secret values — fine to print
           # everything else.

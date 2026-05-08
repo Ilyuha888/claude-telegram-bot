@@ -6,7 +6,7 @@ import { InlineKeyboard } from "grammy";
 import { ClaudeSession } from "./session";
 import { session as mainSession } from "./session";
 import { PROMPTS } from "./scheduler-prompts";
-import { ALLOWED_USERS, BOT_DATA_DIR, SCHEDULES_FILE } from "./config";
+import { ALLOWED_USER, BOT_DATA_DIR, SCHEDULES_FILE } from "./config";
 import { escapeHtml } from "./formatting";
 import * as schedulesStore from "./mode2/schedules-store";
 import * as notifStore from "./mode2/notifications-store";
@@ -102,7 +102,7 @@ async function fire(schedule: Schedule): Promise<void> {
 
   if (!botInstance) return;
 
-  const chatId = ALLOWED_USERS[0];
+  const chatId = ALLOWED_USER;
   if (!chatId) return;
 
   try {
@@ -132,7 +132,7 @@ async function fireReminder(schedule: Schedule): Promise<void> {
   await schedulesStore.remove(schedule.id);
 
   if (!botInstance) return;
-  const chatId = ALLOWED_USERS[0];
+  const chatId = ALLOWED_USER;
   if (!chatId) return;
 
   // Scribe-created reminder — direct alert with note context
