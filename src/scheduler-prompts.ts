@@ -21,21 +21,24 @@ INSTRUCTIONS:
 2. List all files in ${VAULT_DIR}/projects/
    For each .md file (excluding tasks.md), read frontmatter only (first 15 lines).
    Collect projects where status is "active" or "blocked".
-   Extract: next_action, due, energy, waiting_on, last_reviewed.
+   Extract: next_action, due, energy, waiting_on, last_reviewed, daily_habit.
 
-3. Sort active projects: overdue due date first, then by last_reviewed (oldest first), then no-due-date last.
-   Hard cap: show max 3 projects.
+3. Split into two buckets:
+   A. PINNED: projects with daily_habit: true — always include all of them, listed first.
+   B. RANKED: remaining active/blocked projects — sort by overdue due date first, then by last_reviewed (oldest first), then no-due-date last. Cap at 4 (so total with pinned stays readable).
 
 4. Flag these conditions:
    ⚠️  due date is today or past
    🕐  last_reviewed is missing or older than 7 days
    🚧  status is "blocked" — show waiting_on value
+   📌  daily_habit: true (pinned daily)
 
 OUTPUT FORMAT (Telegram markdown, ≤1200 chars):
 
 📅 *[Weekday, Date]*
 
 **Projects:**
+• 📌 [project-name] — [next_action]  ← pinned daily habits first
 • [project-name] — [next_action]
   _(due: YYYY-MM-DD | energy: deep/shallow/admin)_  ← omit if not set
   🚧 Blocked: [waiting_on]  ← only if blocked

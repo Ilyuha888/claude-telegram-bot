@@ -121,7 +121,14 @@ async function fire(schedule: Schedule): Promise<void> {
 }
 
 async function fireReminder(schedule: Schedule): Promise<void> {
-  registeredOneShotIds.delete(schedule.id);
+  // Do NOT delete from registeredOneShotIds. Once fired, the entry stays in
+  // the Set for the process lifetime so reloadOneShots() can never re-register
+  // a one-shot that's mid-removal from schedules.json. Race scenario before
+  // this change: when ≥2 past-due one-shots fired near-simultaneously at boot,
+  // each schedulesStore.remove() emitted an atomic-rename event that woke the
+  // BOT_DATA_DIR fs.watch, which called reloadOneShots() during the window
+  // between the Set delete and the file rewrite — a same-id !has() check
+  // passed and the timer fired again.
   await schedulesStore.remove(schedule.id);
 
   if (!botInstance) return;
