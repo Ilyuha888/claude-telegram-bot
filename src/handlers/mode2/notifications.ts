@@ -370,7 +370,8 @@ async function handleRemindSet(
     cron: "",
     tz: "Europe/Moscow",
     prompt_key: "remind_later",
-    last_fired: fireAt,
+    last_fired: null,
+    fire_at: fireAt,
     one_shot: true,
     payload: { notification_id: notifId },
   };
