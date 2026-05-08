@@ -99,7 +99,7 @@ export async function handleNotificationCallback(ctx: Context): Promise<void> {
   switch (action) {
     case "show":      if (arg) return handleShow(ctx, arg); break;
     case "new":       if (arg) return handleNewSession(ctx, arg); break;
-    case "del":       if (arg) return handleDelete(ctx, arg); break;
+    case "del":       if (arg) return handleDelete(ctx, arg, parts[3]); break;
     case "remind":    if (arg) return handleRemindLater(ctx, arg); break;
     case "sched-del": if (arg) return handleSchedDel(ctx, arg); break;
     case "tab":
@@ -213,9 +213,12 @@ async function handleShow(ctx: Context, notifId: string): Promise<void> {
     : notif.content;
 
   const body = convertMarkdownToHtml(truncated);
+  // Delete from the menu's show-view returns to the fired list so the user
+  // can keep working through their backlog. The :menu suffix is read by
+  // handleDelete to switch the post-delete behaviour.
   const keyboard = new InlineKeyboard()
     .text("New session", `notif:new:${notifId}`)
-    .text("Delete", `notif:del:${notifId}`)
+    .text("Delete", `notif:del:${notifId}:menu`)
     .row()
     .text("Remind later", `notif:remind:${notifId}`)
     .row()
@@ -286,10 +289,21 @@ async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
   }
 }
 
-async function handleDelete(ctx: Context, notifId: string): Promise<void> {
+async function handleDelete(
+  ctx: Context,
+  notifId: string,
+  source?: string,
+): Promise<void> {
   await notifStore.markDeleted(notifId);
-  await ctx.answerCallbackQuery({ text: "Deleted" });
 
+  // From the menu (Show → Delete), pop back to the Fired tab so the user
+  // can keep clearing the backlog. From a direct notification message
+  // (no :menu suffix), keep the original "✕ Notification deleted" terminal.
+  if (source === "menu") {
+    return renderFiredTab(ctx);
+  }
+
+  await ctx.answerCallbackQuery({ text: "Deleted" });
   try {
     await ctx.editMessageText("✕ Notification deleted", {
       reply_markup: new InlineKeyboard(),
