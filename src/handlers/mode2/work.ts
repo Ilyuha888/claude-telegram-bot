@@ -2,7 +2,7 @@
 import type { Context } from "grammy";
 import { join, resolve } from "path";
 import { access } from "fs/promises";
-import { ALLOWED_USERS, REPOS_DIR } from "../../config";
+import { ALLOWED_USER, REPOS_DIR } from "../../config";
 import { isAuthorized, isPathAllowed } from "../../security";
 import { auditLog } from "../../utils";
 import { escapeHtml } from "../../formatting";
@@ -14,7 +14,7 @@ import { TmuxMissing, SpawnFailed, WorktreeExists } from "../../mode2/errors";
 
 function checkAuth(ctx: Context): boolean {
   const userId = ctx.from?.id;
-  return !!(userId && isAuthorized(userId, ALLOWED_USERS));
+  return !!(userId && isAuthorized(userId, ALLOWED_USER));
 }
 
 function parseArgs(raw: string): {

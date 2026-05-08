@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { ALLOWED_USERS } from "../../config";
+import { ALLOWED_USER } from "../../config";
 import { isAuthorized } from "../../security";
 import { auditLog } from "../../utils";
 import { escapeHtml } from "../../formatting";
@@ -10,7 +10,7 @@ import { resolve, join } from "path";
 
 function checkAuth(ctx: Context): boolean {
   const userId = ctx.from?.id;
-  return !!(userId && isAuthorized(userId, ALLOWED_USERS));
+  return !!(userId && isAuthorized(userId, ALLOWED_USER));
 }
 
 export async function handleClose(ctx: Context): Promise<void> {

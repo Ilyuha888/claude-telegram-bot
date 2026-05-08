@@ -6,7 +6,7 @@
 
 import type { Context } from "grammy";
 import { session } from "../session";
-import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
+import { WORKING_DIR, ALLOWED_USER, RESTART_FILE } from "../config";
 import { isAuthorized } from "../security";
 
 /**
@@ -16,7 +16,7 @@ export async function handleStart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
     return;
   }
@@ -49,7 +49,7 @@ export async function handleStart(ctx: Context): Promise<void> {
 export async function handleNew(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized.");
     return;
   }
@@ -75,7 +75,7 @@ export async function handleNew(ctx: Context): Promise<void> {
 export async function handleStop(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized.");
     return;
   }
@@ -98,7 +98,7 @@ export async function handleStop(ctx: Context): Promise<void> {
 export async function handleStatus(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized.");
     return;
   }
@@ -171,7 +171,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
 export async function handleResume(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized.");
     return;
   }
@@ -229,7 +229,7 @@ export async function handleRestart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized.");
     return;
   }
@@ -265,7 +265,7 @@ export async function handleRestart(ctx: Context): Promise<void> {
 export async function handleRetry(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized.");
     return;
   }

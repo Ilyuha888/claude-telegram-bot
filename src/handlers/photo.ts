@@ -7,7 +7,7 @@
 import type { Context } from "grammy";
 import type { UserContentBlock } from "../session";
 import { session } from "../session";
-import { ALLOWED_USERS, TEMP_DIR } from "../config";
+import { ALLOWED_USER, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit, buildMessageContext, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
@@ -132,7 +132,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
   }
 
   // 1. Authorization check
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
     return;
   }

@@ -185,9 +185,9 @@ export function isBashAutoApprovable(command: string): boolean {
 
 export function isAuthorized(
   userId: number | undefined,
-  allowedUsers: number[]
+  allowedUser: number
 ): boolean {
   if (!userId) return false;
-  if (allowedUsers.length === 0) return false;
-  return allowedUsers.includes(userId);
+  if (!allowedUser || Number.isNaN(allowedUser)) return false;
+  return userId === allowedUser;
 }

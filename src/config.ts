@@ -35,13 +35,15 @@ process.env.PATH = pathParts.join(":");
 // ============== Core Configuration ==============
 
 export const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-export const ALLOWED_USERS: number[] = (
-  process.env.TELEGRAM_ALLOWED_USERS || ""
-)
-  .split(",")
-  .filter((x) => x.trim())
-  .map((x) => parseInt(x.trim(), 10))
-  .filter((x) => !isNaN(x));
+
+// The bot is single-tenant per deployment: one Claude session, one vault, one
+// scheduler. ALLOWED_USER gates which Telegram account can talk to it; for
+// multiple humans run multiple bot deployments. The old TELEGRAM_ALLOWED_USERS
+// env var (plural, comma-separated list) is rejected with a migration error
+// below — its multi-value shape was misleading because the rest of the bot
+// only ever served the first entry.
+const _rawAllowedUser = (process.env.TELEGRAM_ALLOWED_USER || "").trim();
+export const ALLOWED_USER: number = parseInt(_rawAllowedUser, 10);
 
 export const WORKING_DIR = process.env.CLAUDE_WORKING_DIR || HOME;
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -326,13 +328,32 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-if (ALLOWED_USERS.length === 0) {
+if (process.env.TELEGRAM_ALLOWED_USERS) {
   console.error(
-    "ERROR: TELEGRAM_ALLOWED_USERS environment variable is required"
+    "ERROR: TELEGRAM_ALLOWED_USERS was renamed to TELEGRAM_ALLOWED_USER (singular).\n" +
+    "       The bot is single-tenant per deployment — one Telegram user per .env.\n" +
+    "       Update your .env:  TELEGRAM_ALLOWED_USER=<your-numeric-id>\n" +
+    "       For multiple humans, run multiple bot deployments (separate token, BOT_DATA_DIR, vault)."
+  );
+  process.exit(1);
+}
+
+if (_rawAllowedUser.includes(",")) {
+  console.error(
+    "ERROR: TELEGRAM_ALLOWED_USER must be a single numeric Telegram user ID, not a list.\n" +
+    `       Got: ${JSON.stringify(_rawAllowedUser)}\n` +
+    "       For multiple humans, run multiple bot deployments."
+  );
+  process.exit(1);
+}
+
+if (!_rawAllowedUser || Number.isNaN(ALLOWED_USER)) {
+  console.error(
+    "ERROR: TELEGRAM_ALLOWED_USER environment variable is required (your numeric Telegram user ID)."
   );
   process.exit(1);
 }
 
 console.log(
-  `Config loaded: ${ALLOWED_USERS.length} allowed users, working dir: ${WORKING_DIR}`
+  `Config loaded: allowed user ${ALLOWED_USER}, working dir: ${WORKING_DIR}`
 );
