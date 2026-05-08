@@ -61,3 +61,79 @@ jobs:
             --entrypoint sh \
             claude-telegram-bot:ci \
             -c "mkdir -p /tmp/bot-data /tmp/vault && timeout 10 bun run src/index.ts; echo exit=\$?"
+
+  compose-smoke:
+    # Tier-B boot smoke: full `docker compose up` with a real CI Telegram
+    # token so we exercise compose mounts, env propagation, fs.watch on
+    # bind mounts, and built-in MCP registration end-to-end. We assert the
+    # `[scheduler] started:` log line appears within 60 s, then tear down.
+    #
+    # Skipped on PRs from forks because secrets aren't injected into
+    # fork-PR runs by default (and we don't want them to be).
+    #
+    # Does NOT catch SDK-variant or Claude-auth issues — those require a
+    # real query() call which would need an Anthropic API key (Tier C).
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.event.pull_request.head.repo.fork != true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare ephemeral state dirs
+        run: |
+          mkdir -p /tmp/bot-data /tmp/empty-vault
+          # docker-compose mounts ${HOME}/.claude — ensure it exists so the
+          # mount succeeds. Empty dir is fine; bot doesn't need Claude auth
+          # to boot, only to answer messages.
+          mkdir -p "$HOME/.claude"
+
+      - name: Write CI .env
+        run: |
+          cat > .env <<EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.CI_TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALLOWED_USERS=1
+          EOF
+          # The actions log auto-masks secret values — fine to print
+          # everything else.
+          grep -v TELEGRAM_BOT_TOKEN .env || true
+
+      - name: Boot via docker compose
+        env:
+          BOT_DATA_DIR: /tmp/bot-data
+          CTB_VAULT_DIR: /tmp/empty-vault
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 30); do
+            if docker compose logs bot 2>&1 | grep -q '\[scheduler\] started:'; then
+              echo "✅ scheduler-started signature seen"
+              docker compose logs bot
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "❌ scheduler-started signature not seen within 60 s"
+          docker compose logs bot
+          exit 1
+
+      - name: Assert built-in MCPs registered
+        run: |
+          if ! docker compose logs bot 2>&1 | grep -q 'Loaded 2 built-in MCP server(s)'; then
+            echo "❌ built-in MCP servers not registered"
+            exit 1
+          fi
+          echo "✅ built-in MCP servers registered"
+
+      - name: Assert no boot catch-up
+        run: |
+          if ! docker compose logs bot 2>&1 | grep -q '0 catch-up fire(s)'; then
+            echo "❌ boot fired scheduler routines on a fresh install — D1 regression"
+            exit 1
+          fi
+          echo "✅ no boot catch-up"
+
+      - name: Tear down
+        if: always()
+        env:
+          BOT_DATA_DIR: /tmp/bot-data
+          CTB_VAULT_DIR: /tmp/empty-vault
+        run: docker compose down -v
