@@ -137,6 +137,9 @@ export class ClaudeSession {
   private stopRequested = false;
   private _isProcessing = false;
   private _wasInterruptedByNewMessage = false;
+  /** Set when the last SDK result event reported a non-success subtype or is_error.
+   * Persisted into SavedSession so the auto-resume picker can skip it on next boot. */
+  private _lastResultErrored = false;
 
   private readonly persist: boolean;
 
@@ -227,7 +230,10 @@ export class ClaudeSession {
     if (this.sessionId !== null) return;
     if (this._justCleared) { this._justCleared = false; return; }
 
-    const sessions = this.getSessionList(); // already filters by WORKING_DIR
+    // Skip sessions whose last SDK result was an error — resuming them just
+    // reproduces the failure (smoke-test finding: post-SDK-crash auto-resume
+    // inherited a corrupt session and returned 0/0 forever).
+    const sessions = this.getSessionList().filter((s) => !s.errored); // already filters by WORKING_DIR
     if (sessions.length === 0) return;
 
     const latest = sessions[0]!;
@@ -264,6 +270,10 @@ export class ClaudeSession {
     if (chatId) {
       process.env.TELEGRAM_CHAT_ID = String(chatId);
     }
+
+    // Reset the per-result error flag at the start of each query so it can't
+    // leak from a previous failed query into the next saveSession().
+    this._lastResultErrored = false;
 
     // Auto-resume from disk on first message after process start
     this.tryAutoResume();
@@ -601,6 +611,23 @@ export class ClaudeSession {
           console.log("Response complete");
           queryCompleted = true;
 
+          // Surface SDK execution errors. A "Response complete" with subtype
+          // !== "success" or is_error=true (and 0/0 token usage) used to be
+          // invisible — that's how we missed the SDK 0.1.76 effortLevel crash
+          // for an hour during the smoke test.
+          const ev = event as Record<string, unknown>;
+          if (ev.subtype !== "success" || ev.is_error) {
+            const errs = Array.isArray(ev.errors) ? ev.errors : [];
+            const firstErr = errs.length > 0 ? String(errs[0]).slice(0, 200) : "(no errors[])";
+            console.error(
+              `Response error: subtype=${ev.subtype} is_error=${ev.is_error} num_turns=${ev.num_turns} first_error=${firstErr}`,
+            );
+            this._lastResultErrored = true;
+            this.saveSession();
+          } else {
+            this._lastResultErrored = false;
+          }
+
           // Final sweep: pick up any send-file requests written after the tool_use
           // event fired (the MCP server runs after the assistant event, so the early
           // poll in the tool_use handler always fires too soon).
@@ -673,6 +700,7 @@ export class ClaudeSession {
     this.conversationTitle = null;
     this._justCleared = true;
     this.stopRequested = false;
+    this._lastResultErrored = false;
     console.log("Session cleared");
   }
 
@@ -693,6 +721,7 @@ export class ClaudeSession {
         saved_at: new Date().toISOString(),
         working_dir: WORKING_DIR,
         title: this.conversationTitle || "Sessione senza titolo",
+        errored: this._lastResultErrored || undefined,
       };
 
       // Remove any existing entry with same session_id (update in place)

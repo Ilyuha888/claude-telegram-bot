@@ -1,39 +1,31 @@
 /**
- * MCP Servers Configuration for Claude Telegram Bot.
+ * Optional user MCP servers for the Claude Telegram Bot.
  *
- * Copy this file and customize for your setup.
- * Each MCP server gives Claude access to external tools/data.
+ * The two built-in MCPs (`ask-user`, `send-file`) are registered automatically
+ * by `src/config.ts` — you do NOT need to list them here. This file is only
+ * for personal/optional MCP servers you want to wire up.
+ *
+ * Copy this file to `mcp-config.ts` and uncomment what you want.
  *
  * Format matches Claude's MCP config schema.
  * See: https://docs.anthropic.com/en/docs/build-with-claude/mcp
  */
 
 import { homedir } from "os";
-import { dirname } from "path";
 
 const HOME = homedir();
-const REPO_ROOT = dirname(import.meta.path);
 
 export const MCP_SERVERS: Record<
   string,
   | { command: string; args?: string[]; env?: Record<string, string> }
   | { type: "http"; url: string; headers?: Record<string, string> }
 > = {
-  // Ask User - present options as Telegram inline keyboard buttons.
-  // Built-in; required for the /scribe commit-confirm flow and for any
-  // skill that asks the user a multiple-choice question.
-  "ask-user": {
-    command: "bun",
-    args: ["run", `${REPO_ROOT}/ask_user_mcp/server.ts`],
-  },
-
-  // Send File - send files (images, videos, audio, documents) back to the user.
-  // Built-in; required when you ask the bot to "send me back the file" or
-  // when a skill needs to deliver a generated artifact.
-  "send-file": {
-    command: "bun",
-    args: ["run", `${REPO_ROOT}/send_file_mcp/server.ts`],
-  },
+  // Example: haft — personal decision/onboarding tool.
+  // The binary must be on PATH. Install per its own README before uncommenting.
+  // "haft": {
+  //   command: "haft",
+  //   args: ["serve"],
+  // },
 
   // Example: Typefully - draft and schedule social posts
   // Docs: https://support.typefully.com/en/articles/13128440-typefully-mcp-server

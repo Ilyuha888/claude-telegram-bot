@@ -1,11 +1,12 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { watch, type FSWatcher } from "fs";
+import { basename } from "path";
 import type { Bot } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { ClaudeSession } from "./session";
 import { session as mainSession } from "./session";
 import { PROMPTS } from "./scheduler-prompts";
-import { ALLOWED_USERS, SCHEDULES_FILE } from "./config";
+import { ALLOWED_USERS, BOT_DATA_DIR, SCHEDULES_FILE } from "./config";
 import { escapeHtml } from "./formatting";
 import * as schedulesStore from "./mode2/schedules-store";
 import * as notifStore from "./mode2/notifications-store";
@@ -135,6 +136,7 @@ async function fireReminder(schedule: Schedule): Promise<void> {
       status: "unread",
     };
     await notifStore.append(newNotif);
+    console.log(`[scheduler] fired one-shot ${schedule.id} (scribe_reminder)`);
     const reminderKeyboard = new InlineKeyboard()
       .text("Log outcome", `notif:new:${newNotif.id}`)
       .text("Delete", `notif:del:${newNotif.id}`)
@@ -172,6 +174,7 @@ async function fireReminder(schedule: Schedule): Promise<void> {
     status: "unread",
   };
   await notifStore.append(newNotif);
+  console.log(`[scheduler] fired one-shot ${schedule.id} (remind-later)`);
 
   try {
     const msg = await botInstance.api.sendMessage(
@@ -189,9 +192,14 @@ async function seedDefaults(): Promise<void> {
   const existing = await schedulesStore.list();
   const existingIds = new Set(existing.map((s) => s.id));
 
+  // Seed with last_fired = now so a fresh install does NOT fire all routines
+  // immediately on first boot. The next cron tick (per each schedule's cron
+  // expression) is the first real fire. Surprise token spend on first launch
+  // was a smoke-test finding.
+  const now = new Date().toISOString();
   for (const def of DEFAULT_SCHEDULES) {
     if (!existingIds.has(def.id)) {
-      await schedulesStore.upsert({ ...def, last_fired: null });
+      await schedulesStore.upsert({ ...def, last_fired: now });
     }
   }
 }
@@ -203,9 +211,11 @@ function registerOneShot(schedule: Schedule): void {
   if (registeredOneShotIds.has(schedule.id)) return;
   registeredOneShotIds.add(schedule.id);
 
-  const fireAt = schedule.last_fired
-    ? new Date(schedule.last_fired).getTime()
-    : Date.now();
+  // Prefer `fire_at` (the new schema); fall back to `last_fired` for any
+  // legacy entry that schedules-store.load() couldn't migrate (e.g. a row
+  // that was written but the migration path raced).
+  const fireAtSource = schedule.fire_at ?? schedule.last_fired;
+  const fireAt = fireAtSource ? new Date(fireAtSource).getTime() : Date.now();
   const delayMs = Math.max(0, fireAt - Date.now());
 
   if (delayMs > MAX_TIMEOUT_MS) {
@@ -279,8 +289,15 @@ export async function startScheduler(bot: Bot): Promise<void> {
     cronHandles.push(task);
   }
 
-  // Watch for new one-shot entries written at runtime (e.g. by Scribe skill)
-  fileWatcher = watch(SCHEDULES_FILE, { persistent: false }, () => {
+  // Watch for new one-shot entries written at runtime (e.g. by Scribe skill).
+  // We watch the parent directory rather than the file itself because
+  // schedules-store.save() uses tmp + rename for atomicity, which swaps the
+  // inode and detaches a file-level watcher after the first save. A directory
+  // watch survives that and emits one event per affected filename.
+  const schedulesBasename = basename(SCHEDULES_FILE);
+  fileWatcher = watch(BOT_DATA_DIR, { persistent: false }, (_event, filename) => {
+    if (!filename) return;
+    if (filename !== schedulesBasename) return;
     reloadOneShots().catch((err) =>
       console.error("[scheduler] reloadOneShots error:", err),
     );
