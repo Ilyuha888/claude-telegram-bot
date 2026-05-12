@@ -389,6 +389,10 @@ After code changes on Linux with systemd: `sudo systemctl restart claude-telegra
 - Check `bot-data/schedules.json` for correct cron syntax
 - Verify `TZ` is set to a valid IANA timezone (e.g. `Europe/Moscow`, `America/New_York`)
 
+**`/menu` (Mode 2) fails to spawn a session**
+- One-time setup per target repo: run `claude` interactively inside the repo once and accept the workspace-trust dialog. Trust persists for the workspace; subsequent `/menu` spawns succeed without prompts.
+- The repo's default branch is detected automatically — `main`, `master`, or whatever HEAD points at — so this is no longer a source of "worktree already exists" errors.
+
 **`pdftotext` not found (native mode)**
 - macOS: `brew install poppler`
 - Linux: `apt install poppler-utils`
