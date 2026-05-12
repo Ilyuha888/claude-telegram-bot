@@ -252,8 +252,9 @@ async function spawnSession(ctx: Context, repo: string): Promise<void> {
 
   let worktreeCreated = false;
   try {
-    // Create a fresh branch from main in an isolated worktree
-    const wt = await sh.gitWorktreeAdd(repoPath, worktreePath, "main", branchName);
+    // Create a fresh branch from the repo's default branch in an isolated worktree
+    const defaultBranch = await sh.gitDefaultBranch(repoPath);
+    const wt = await sh.gitWorktreeAdd(repoPath, worktreePath, defaultBranch, branchName);
     if (!wt.ok) throw new WorktreeExists(worktreePath);
     worktreeCreated = true;
 
