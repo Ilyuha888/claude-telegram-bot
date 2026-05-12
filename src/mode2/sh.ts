@@ -88,6 +88,21 @@ export async function gitListBranches(repoPath: string): Promise<string[]> {
   return r.stdout.split("\n").map((b) => b.trim()).filter(Boolean);
 }
 
+/**
+ * Returns the default branch name (main/master/etc.) for a repo.
+ * Tries HEAD symbolic ref first, then falls back to checking for "main" or "master".
+ */
+export async function gitDefaultBranch(repoPath: string): Promise<string> {
+  // Try to read HEAD → refs/heads/<name>
+  const r = await run(["git", "-C", repoPath, "symbolic-ref", "--short", "HEAD"]);
+  if (r.ok && r.stdout) return r.stdout.trim();
+  // Fallback: check common names
+  const branches = await gitListBranches(repoPath);
+  if (branches.includes("main")) return "main";
+  if (branches.includes("master")) return "master";
+  return "main"; // last resort
+}
+
 export async function gitWorktreeAdd(
   repoPath: string,
   worktreePath: string,
