@@ -10,7 +10,12 @@ import type { Message } from "grammy/types";
 import type { PendingMediaGroup } from "../types";
 import { MEDIA_GROUP_TIMEOUT } from "../config";
 import { rateLimiter } from "../security";
-import { auditLogRateLimit, buildMessageContext } from "../utils";
+import {
+  auditLogRateLimit,
+  buildMessageContext,
+  classifyClaudeError,
+  formatClaudeErrorReply,
+} from "../utils";
 import { session } from "../session";
 
 /**
@@ -199,14 +204,14 @@ export async function handleProcessingError(
   }
 
   // Send error message
-  const errorStr = String(error);
-  if (errorStr.includes("abort") || errorStr.includes("cancel")) {
+  const kind = classifyClaudeError(error);
+  if (kind === "cancellation") {
     // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
     const wasInterrupt = session.consumeInterruptFlag();
     if (!wasInterrupt) {
-      await ctx.reply("🛑 Query stopped.");
+      await ctx.reply(formatClaudeErrorReply(error));
     }
   } else {
-    await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
+    await ctx.reply(formatClaudeErrorReply(error));
   }
 }

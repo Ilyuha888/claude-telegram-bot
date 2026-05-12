@@ -8,6 +8,13 @@ import type { Context } from "grammy";
 import { session } from "../session";
 import { WORKING_DIR, ALLOWED_USER, RESTART_FILE } from "../config";
 import { isAuthorized } from "../security";
+import { formatClaudeErrorReply } from "../utils";
+
+const SUMMARIZATION_PROMPT =
+  "Summarize this entire conversation as a self-contained handoff brief for a future instance of yourself. " +
+  "Include: the user's overall goal, key decisions made and why, current task state, open questions, and any " +
+  "file paths or identifiers worth carrying forward. Be terse — aim for under 1500 characters. Output the brief " +
+  "only, no preamble.";
 
 /**
  * /start - Show welcome message and status.
@@ -30,6 +37,7 @@ export async function handleStart(ctx: Context): Promise<void> {
       `Working directory: <code>${workDir}</code>\n\n` +
       `<b>Commands:</b>\n` +
       `/new - Start fresh session\n` +
+      `/compact - Summarize and start fresh\n` +
       `/stop - Stop current query\n` +
       `/status - Show detailed status\n` +
       `/resume - Resume last session\n` +
@@ -257,6 +265,62 @@ export async function handleRestart(ctx: Context): Promise<void> {
 
   // Exit - launchd will restart us
   process.exit(0);
+}
+
+/**
+ * /compact - Summarize current session into a handoff brief, then kill it.
+ * The brief is prepended to the user's next message via session.pendingHandoff.
+ * Must be invoked before the context wall — summarization needs context room.
+ */
+export async function handleCompact(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const username = ctx.from?.username || "unknown";
+
+  if (!isAuthorized(userId, ALLOWED_USER)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (!session.isActive) {
+    await ctx.reply("Nothing to compact — no session running.");
+    return;
+  }
+
+  if (session.isRunning) {
+    await ctx.reply("⏳ A query is in progress. /stop first, then /compact.");
+    return;
+  }
+
+  await ctx.reply("📦 Compacting session… this takes one turn.");
+
+  const stopProcessing = session.startProcessing();
+  try {
+    // No-op status callback: we don't want streaming events surfacing to the user
+    // for this internal summarization turn.
+    const noop = async () => {};
+    const summary = await session.sendMessageStreaming(
+      SUMMARIZATION_PROMPT,
+      username,
+      userId!,
+      noop,
+      ctx.chat?.id,
+      ctx
+    );
+
+    await session.kill();
+    session.pendingHandoff = summary;
+
+    // Telegram limit is 4096; keep room for the wrapper text.
+    const preview = summary.length > 3500 ? summary.slice(0, 3500) + "\n…[truncated]" : summary;
+    await ctx.reply(
+      `✅ Session compacted. Next message starts fresh — the brief below will be prepended:\n\n${preview}`
+    );
+  } catch (error) {
+    console.error("Compact failed:", error);
+    await ctx.reply(formatClaudeErrorReply(error));
+  } finally {
+    stopProcessing();
+  }
 }
 
 /**

@@ -15,6 +15,8 @@ import { readFileSync } from "fs";
 import type { Context } from "grammy";
 import {
   ALLOWED_PATHS,
+  CONTEXT_WARN_THRESHOLD,
+  CONTEXT_WINDOW_TOKENS,
   MCP_SERVERS,
   SAFETY_PROMPT,
   AUTO_RESUME_TTL_MS,
@@ -129,6 +131,10 @@ export class ClaudeSession {
   lastUsage: TokenUsage | null = null;
   lastMessage: string | null = null;
   conversationTitle: string | null = null;
+  /** Summary from /compact, prepended to the next user message in a fresh session. */
+  pendingHandoff: string | null = null;
+  /** Tracks whether the 85% context warning has been emitted for the current session. */
+  contextWarningSent = false;
   private _pendingAutoResumeNotice: string | null = null;
   private _justCleared = false;
 
@@ -292,6 +298,16 @@ export class ClaudeSession {
     // Build promptInput: string for text messages, AsyncIterable<SDKUserMessage> for content blocks
     let promptInput: string | AsyncIterable<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage>;
 
+    // Consume /compact handoff: prepend the carried-over brief on the first
+    // message of a fresh session, then clear it so it doesn't leak forward.
+    const handoff = isNewSession && this.pendingHandoff ? this.pendingHandoff : null;
+    if (handoff) {
+      this.pendingHandoff = null;
+    }
+    const handoffPrefix = handoff
+      ? `[Carried over from prior session:\n${handoff}\n---]\n\n`
+      : "";
+
     if (typeof message === 'string') {
       let messageToSend = message;
       if (isNewSession) {
@@ -308,7 +324,7 @@ export class ClaudeSession {
             timeZoneName: "short",
           }
         )}]\n\n`;
-        messageToSend = datePrefix + message;
+        messageToSend = datePrefix + handoffPrefix + message;
       }
       promptInput = messageToSend;
     } else {
@@ -327,7 +343,8 @@ export class ClaudeSession {
             timeZoneName: "short",
           }
         )}]\n\n`;
-        blocks = [{ type: 'text', text: datePrefix }, ...blocks];
+        const preludeText = datePrefix + handoffPrefix;
+        blocks = [{ type: 'text', text: preludeText }, ...blocks];
       }
       const sdkMsg = {
         type: 'user' as const,
@@ -644,6 +661,26 @@ export class ClaudeSession {
                 u.cache_read_input_tokens || 0
               } cache_create=${u.cache_creation_input_tokens || 0}`
             );
+
+            // Proactive context warning: once per session, fire when total input
+            // tokens cross the threshold so the user can /compact before the wall.
+            const totalIn =
+              (u.input_tokens || 0) +
+              (u.cache_read_input_tokens || 0) +
+              (u.cache_creation_input_tokens || 0);
+            const ratio = totalIn / CONTEXT_WINDOW_TOKENS;
+            if (ratio >= CONTEXT_WARN_THRESHOLD && !this.contextWarningSent && ctx) {
+              this.contextWarningSent = true;
+              const pct = Math.round(ratio * 100);
+              try {
+                await ctx.reply(
+                  `⚠️ Context at ~${pct}% (${totalIn.toLocaleString()}/${CONTEXT_WINDOW_TOKENS.toLocaleString()} tokens).\n\n` +
+                  `Run /compact to preserve key context, or /new to start fresh — before the next message hits the wall.`
+                );
+              } catch (e) {
+                console.warn(`Failed to send context warning: ${e}`);
+              }
+            }
           }
         }
       }
@@ -701,6 +738,7 @@ export class ClaudeSession {
     this._justCleared = true;
     this.stopRequested = false;
     this._lastResultErrored = false;
+    this.contextWarningSent = false;
     console.log("Session cleared");
   }
 

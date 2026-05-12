@@ -23,6 +23,32 @@ if (OPENAI_API_KEY && TRANSCRIPTION_AVAILABLE) {
   openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
 }
 
+// ============== Claude Error Classification ==============
+
+export type ClaudeErrorKind = "context_limit" | "cancellation" | "generic";
+
+export function classifyClaudeError(error: unknown): ClaudeErrorKind {
+  const s = String(error);
+  if (/prompt is too long/i.test(s)) return "context_limit";
+  if (/abort|cancel/i.test(s)) return "cancellation";
+  return "generic";
+}
+
+export function formatClaudeErrorReply(error: unknown): string {
+  switch (classifyClaudeError(error)) {
+    case "context_limit":
+      return (
+        "🗜️ Session context is full.\n\n" +
+        "Use /new to start a fresh session. " +
+        "Tip: run /compact earlier next time to carry a summary forward."
+      );
+    case "cancellation":
+      return "🛑 Query stopped.";
+    default:
+      return `❌ Error: ${String(error).slice(0, 200)}`;
+  }
+}
+
 // ============== Audit Logging ==============
 
 async function writeAuditLog(event: AuditEvent): Promise<void> {

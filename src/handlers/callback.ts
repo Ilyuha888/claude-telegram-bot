@@ -11,6 +11,7 @@ import { session } from "../session";
 import { resolvePermissionRequest } from "./permission";
 import { resolveQuestionRequest } from "./question";
 import { ALLOWED_USER } from "../config";
+import { classifyClaudeError, formatClaudeErrorReply } from "../utils";
 import { isAuthorized } from "../security";
 import { handleSessions, handleRepos, handleWork, handleClose, handleMode2Callback } from "./mode2";
 import { handleNotificationCallback } from "./mode2/notifications";
@@ -173,14 +174,15 @@ export async function handleCallback(ctx: Context): Promise<void> {
       }
     }
 
-    if (String(error).includes("abort") || String(error).includes("cancel")) {
+    const kind = classifyClaudeError(error);
+    if (kind === "cancellation") {
       // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
       const wasInterrupt = session.consumeInterruptFlag();
       if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
+        await ctx.reply(formatClaudeErrorReply(error));
       }
     } else {
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      await ctx.reply(formatClaudeErrorReply(error));
     }
   } finally {
     typing.stop();

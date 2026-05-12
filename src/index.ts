@@ -16,6 +16,7 @@ import {
   handleResume,
   handleRestart,
   handleRetry,
+  handleCompact,
   handleText,
   handleVoice,
   handlePhoto,
@@ -57,6 +58,7 @@ bot.use(
 
 bot.command("start", handleStart);
 bot.command("new", handleNew);
+bot.command("compact", handleCompact);
 bot.command("stop", handleStop);
 bot.command("status", handleStatus);
 bot.command("resume", handleResume);

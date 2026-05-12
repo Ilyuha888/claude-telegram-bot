@@ -10,6 +10,8 @@ import { isAuthorized, rateLimiter } from "../security";
 import {
   auditLog,
   auditLogRateLimit,
+  classifyClaudeError,
+  formatClaudeErrorReply,
   transcribeVoice,
   startTypingIndicator,
   buildMessageContext,
@@ -127,14 +129,15 @@ export async function handleVoice(ctx: Context): Promise<void> {
   } catch (error) {
     console.error("Error processing voice:", error);
 
-    if (String(error).includes("abort") || String(error).includes("cancel")) {
+    const kind = classifyClaudeError(error);
+    if (kind === "cancellation") {
       // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
       const wasInterrupt = session.consumeInterruptFlag();
       if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
+        await ctx.reply(formatClaudeErrorReply(error));
       }
     } else {
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      await ctx.reply(formatClaudeErrorReply(error));
     }
   } finally {
     stopProcessing();
