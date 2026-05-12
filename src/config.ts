@@ -215,6 +215,12 @@ export const BLOCKED_PATTERNS = [
 // Query timeout (3 minutes)
 export const QUERY_TIMEOUT_MS = 180_000;
 
+// Context window budget for claude-sonnet-4-6 as served via the Agent SDK.
+// Empirically 1M — verified by observed Usage logs of >500K tokens in a single
+// turn without the API rejecting the prompt.
+export const CONTEXT_WINDOW_TOKENS = 1_000_000;
+export const CONTEXT_WARN_THRESHOLD = 0.85;
+
 // ============== Voice Transcription ==============
 
 const BASE_TRANSCRIPTION_PROMPT = `Transcribe this voice message accurately.

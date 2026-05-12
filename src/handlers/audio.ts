@@ -13,6 +13,8 @@ import { isAuthorized, rateLimiter } from "../security";
 import {
   auditLog,
   auditLogRateLimit,
+  classifyClaudeError,
+  formatClaudeErrorReply,
   transcribeVoice,
   startTypingIndicator,
 } from "../utils";
@@ -124,13 +126,14 @@ export async function processAudioFile(
   } catch (error) {
     console.error("Error processing audio:", error);
 
-    if (String(error).includes("abort") || String(error).includes("cancel")) {
+    const kind = classifyClaudeError(error);
+    if (kind === "cancellation") {
       const wasInterrupt = session.consumeInterruptFlag();
       if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
+        await ctx.reply(formatClaudeErrorReply(error));
       }
     } else {
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      await ctx.reply(formatClaudeErrorReply(error));
     }
   } finally {
     stopProcessing();

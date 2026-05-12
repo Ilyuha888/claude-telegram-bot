@@ -11,6 +11,8 @@ import {
   buildMessageContext,
   auditLogRateLimit,
   checkInterrupt,
+  classifyClaudeError,
+  formatClaudeErrorReply,
   startTypingIndicator,
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
@@ -117,15 +119,15 @@ export async function handleText(ctx: Context): Promise<void> {
       // Final attempt failed or non-retryable error
       console.error("Error processing message:", error);
 
-      // Check if it was a cancellation
-      if (errorStr.includes("abort") || errorStr.includes("cancel")) {
+      const kind = classifyClaudeError(error);
+      if (kind === "cancellation") {
         // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
         const wasInterrupt = session.consumeInterruptFlag();
         if (!wasInterrupt) {
-          await ctx.reply("🛑 Query stopped.");
+          await ctx.reply(formatClaudeErrorReply(error));
         }
       } else {
-        await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
+        await ctx.reply(formatClaudeErrorReply(error));
       }
       break; // Exit loop after handling error
     }
