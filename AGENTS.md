@@ -72,7 +72,7 @@ The canonical list lives in **`governance/ARCHITECTURE.md`** under "Architecture
 Short summary (do not violate without a `haft_decision` superseding the relevant rule):
 
 - the runtime is Claude Code, not a custom orchestrator
-- the runtime LLM has no arbitrary shell access — commands flow through the allowlist
+- shell commands auto-approve except remote writes and privilege escalation, which need user approval (`src/security.ts`)
 - filesystem writes go only through policy-controlled tools or explicit user approval
 - the knowledge vault is a separate git repository; the bot does not own it
 - single-user platform until a haft decision supersedes `dec-20260320-001`

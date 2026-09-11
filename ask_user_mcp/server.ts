@@ -15,6 +15,33 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { readFileSync } from "fs";
+
+/**
+ * Where this request should be delivered.
+ *
+ * TELEGRAM_CONTEXT_FILE is injected by the bot per ClaudeSession instance and
+ * holds `{ chat_id, thread_id }` for that one conversation. Read fresh on every
+ * tool call, never cached at module load: a session that is resumed or moved
+ * rewrites the file, and a stale read would deliver into the wrong chat.
+ *
+ * TELEGRAM_CHAT_ID stays as the fallback — it is process-global on the bot side
+ * (so it loses under parallel sessions) but it still covers the window before
+ * the first query has written a context file.
+ */
+function resolveDeliveryTarget(): { chatId: string; threadId?: string } {
+  let chatId = process.env.TELEGRAM_CHAT_ID || "";
+  let threadId: string | undefined;
+  try {
+    const raw = readFileSync(process.env.TELEGRAM_CONTEXT_FILE || "", "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed.chat_id) chatId = String(parsed.chat_id);
+    if (parsed.thread_id != null) threadId = String(parsed.thread_id);
+  } catch {
+    // No context file (or unreadable/malformed) — fall back to the env var.
+  }
+  return { chatId, threadId };
+}
 
 // Create the MCP server
 const server = new Server(
@@ -78,9 +105,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error("question and at least 2 options required");
   }
 
-  // Generate request ID and get chat context from environment
+  // Generate request ID and resolve which conversation to deliver into
   const requestUuid = crypto.randomUUID().slice(0, 8);
-  const chatId = process.env.TELEGRAM_CHAT_ID || "";
+  const { chatId, threadId } = resolveDeliveryTarget();
 
   // Write request file for the bot to pick up
   const requestData = {
@@ -89,6 +116,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     options,
     status: "pending",
     chat_id: chatId,
+    thread_id: threadId ?? null,
     created_at: new Date().toISOString(),
   };
 

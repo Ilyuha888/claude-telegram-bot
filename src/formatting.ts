@@ -22,8 +22,13 @@ export function escapeHtml(text: string): string {
  * Telegram HTML supports: <b>, <i>, <code>, <pre>, <a href="">
  */
 export function convertMarkdownToHtml(text: string): string {
+  // Drop NULs first: they're the sentinel the placeholders below are built
+  // from, so input containing a literal "\x00CODEBLOCK0\x00" would collide
+  // with the placeholder namespace and shuffle code blocks between slots.
+  text = text.replace(/\x00/g, "");
+
   // Store code blocks temporarily to avoid processing their contents
-  const codeBlocks: string[] = [];
+  const codeBlocks: { code: string; lang: string }[] = [];
   const inlineCodes: string[] = [];
   const thinkingBlocks: string[] = [];
 
@@ -33,9 +38,9 @@ export function convertMarkdownToHtml(text: string): string {
     return `\x00THINKING${thinkingBlocks.length - 1}\x00`;
   });
 
-  // Save code blocks first (```code```)
-  text = text.replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, code) => {
-    codeBlocks.push(code);
+  // Save code blocks first (```lang\ncode```)
+  text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push({ code, lang: lang || "" });
     return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
   });
 
@@ -54,8 +59,8 @@ export function convertMarkdownToHtml(text: string): string {
   // Bold: **text** -> <b>text</b>
   text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
-  // Also handle *text* as bold (single asterisk)
-  text = text.replace(/(?<!\*)\*(.+?)\*(?!\*)/g, "<b>$1</b>");
+  // Also handle *text* as italic (single asterisk)
+  text = text.replace(/(?<!\*)\*(.+?)\*(?!\*)/g, "<i>$1</i>");
 
   // Double underscore: __text__ -> <b>text</b>
   text = text.replace(/__([^_]+)__/g, "<b>$1</b>");
@@ -77,8 +82,14 @@ export function convertMarkdownToHtml(text: string): string {
 
   // Restore code blocks
   for (let i = 0; i < codeBlocks.length; i++) {
-    const escapedCode = escapeHtml(codeBlocks[i]!);
-    text = text.replace(`\x00CODEBLOCK${i}\x00`, `<pre>${escapedCode}</pre>`);
+    const { code: rawCode, lang } = codeBlocks[i]!;
+    const escapedCode = escapeHtml(rawCode);
+    const html = lang
+      ? `<pre><code class="language-${escapeHtml(lang)}">${escapedCode}</code></pre>`
+      : `<pre>${escapedCode}</pre>`;
+    // Replacer function, not a string: opts out of $-pattern substitution
+    // ($$, $&, $`, $') which would otherwise mangle code containing them.
+    text = text.replace(`\x00CODEBLOCK${i}\x00`, () => html);
   }
 
   // Restore inline code
@@ -86,14 +97,14 @@ export function convertMarkdownToHtml(text: string): string {
     const escapedCode = escapeHtml(inlineCodes[i]!);
     text = text.replace(
       `\x00INLINECODE${i}\x00`,
-      `<code>${escapedCode}</code>`
+      () => `<code>${escapedCode}</code>`
     );
   }
 
   // Restore thinking blocks as spoilers
   for (let i = 0; i < thinkingBlocks.length; i++) {
     const escaped = escapeHtml(thinkingBlocks[i]!.trim());
-    text = text.replace(`\x00THINKING${i}\x00`, `<tg-spoiler>🧠 ${escaped}</tg-spoiler>`);
+    text = text.replace(`\x00THINKING${i}\x00`, () => `<tg-spoiler>🧠 ${escaped}</tg-spoiler>`);
   }
 
   // Collapse multiple newlines

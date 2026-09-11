@@ -12,6 +12,8 @@
 import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { DeliveryTarget } from "../conversation";
+import { threadOpts } from "../conversation";
 import { escapeHtml } from "../formatting";
 
 interface PendingQuestion {
@@ -106,10 +108,16 @@ function formatQuestionPrompt(
 /**
  * Handle an AskUserQuestion tool call: render inline keyboard, await tap,
  * return deny-with-message containing the selection.
+ *
+ * `target`, when set, is the conversation this turn belongs to and is not the
+ * one `ctx` came from (a session spawned into a forum topic) — the keyboard
+ * must be addressed explicitly or it appears in the wrong chat and is never
+ * answered. The askq: response path is keyed by requestId and needs nothing.
  */
 export async function handleAskUserQuestion(
   ctx: Context,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  target?: DeliveryTarget
 ): Promise<PermissionResult> {
   const questions = (input.questions as Array<Record<string, unknown>>) || [];
   if (questions.length === 0) {
@@ -155,10 +163,18 @@ export async function handleAskUserQuestion(
   const keyboard = createQuestionKeyboard(requestId, labels);
 
   try {
-    await ctx.reply(promptText, {
-      reply_markup: keyboard,
-      parse_mode: "HTML",
-    });
+    if (target) {
+      await ctx.api.sendMessage(target.chatId, promptText, {
+        reply_markup: keyboard,
+        parse_mode: "HTML",
+        ...threadOpts(target.threadId),
+      });
+    } else {
+      await ctx.reply(promptText, {
+        reply_markup: keyboard,
+        parse_mode: "HTML",
+      });
+    }
   } catch (err) {
     console.error("Failed to send question keyboard:", err);
     return {

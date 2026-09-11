@@ -3,7 +3,6 @@
  */
 
 import type { Context } from "grammy";
-import type { Message } from "grammy/types";
 
 // Status callback for streaming updates
 export type StatusCallback = (
@@ -27,6 +26,18 @@ export interface SavedSession {
   /** True if the last SDK result event for this session was an error.
    * The auto-resume picker skips entries with errored: true. */
   errored?: boolean;
+  /**
+   * The conversation (ConversationKey) this session belongs to.
+   *
+   * Both fields optional and both absent together on entries written before
+   * sessions knew about conversations — those are, by construction, the single
+   * DM conversation the bot used to have. `thread_id` absent with `chat_id`
+   * present means "this chat, no forum topic" (a DM or the General topic), not
+   * "any topic". See `savedSessionMatchesKey` in src/session.ts for the exact
+   * matching rules; nothing migrates the file, absence is handled at read time.
+   */
+  chat_id?: number;
+  thread_id?: number;
 }
 
 export interface SessionHistory {
@@ -70,18 +81,6 @@ export interface AuditEvent {
   user_id: number;
   username?: string;
   [key: string]: unknown;
-}
-
-// Pending media group for buffering albums
-export interface PendingMediaGroup {
-  items: string[];
-  ctx: Context;
-  // First ctx whose message carries caption/forward/reply context — used to
-  // build the final caption (with attachment paths) at processGroup time.
-  // Falls back to ctx when no item has any context worth surfacing.
-  captionCtx?: Context;
-  statusMsg?: Message;
-  timeout: Timer;
 }
 
 // Bot context with optional message

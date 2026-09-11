@@ -67,13 +67,12 @@ Claude Code runs as dedicated user `assistant` (non-root, uid=1000). Two separat
 
 **Admin session** (tmux `assistant`): `--permission-mode default`, governed by the allowlist in `settings.json` + `settings.local.json`. Interactive prompts appear in the terminal.
 
-**Bot subprocess** (linuz90 SDK): `permissionMode: "default"` + `settingSources: ["user", "local", "project"]`. Permission prompts are routed to Telegram via the `canUseTool` callback — Claude Code asks, the bot sends Allow/Deny inline keyboard buttons, streaming resumes after the user taps. The callback uses a **denylist-only** model (dec-20260420-003): all Bash auto-approves except `git push|commit|reset|rebase|clean` and `sudo`, which always route to the keyboard. Write/Edit/MultiEdit/Read auto-approve when the path is within ALLOWED_PATHS. Rationale: local filesystem changes are recoverable from git; the git remote is the only non-recoverable surface. This also resolves subagent stalls — subagents share the same canUseTool path and can't tap the keyboard, so the denylist ensures they never block on safe ops.
+**Bot subprocess** (linuz90 SDK): `permissionMode: "default"` + `settingSources: ["user", "local", "project"]`. Permission prompts are routed to Telegram via the `canUseTool` callback — Claude Code asks, the bot sends Allow/Deny inline keyboard buttons, streaming resumes after the user taps. The callback auto-approves local work and asks only for what leaves the VM or escalates privilege (`checkAutoApprove` in `src/security.ts`): `sudo`/`su`, ssh/scp/rsync, mail senders, `gh` subcommands other than reads, `gh api`/`curl`/`wget` with a write method or body, connector tools whose verb is not a read, writes outside ALLOWED_PATHS, and writes to `CLAUDE.md`/`settings*.json`. Rationale: local filesystem changes are recoverable from git; the outside world is not. Subagents share the same callback and can't tap the keyboard, so auto-approving local work also keeps them from stalling. Runs without a Telegram context (scheduler) get the same auto-approvals and a plain deny for anything that would need a prompt. The vault's `.claude/settings.local.json` carries ask-rules that route `curl`, `wget`, `gh` and file writes to the callback even when the shared user allowlist would approve them, so the code policy stays authoritative in mode 1; a remote-control session opened in the vault pays for that with prompts on those tools. The audit log covers the calls that reach the callback, not the ones the shared user allowlist settles first.
 
 The same `canUseTool` bridge intercepts Claude Code's built-in `AskUserQuestion` tool: option arrays are rendered as Telegram inline keyboards (callback prefix `askq:`), the user's tap resolves via a deny-with-message pattern that feeds the selected label back as Claude's answer, and streaming continues. Without this intercept the headless SDK subprocess has no channel for AskUserQuestion and silently no-ops.
 
 Additional controls:
 - `settings.local.json` is `chmod 600 assistant` — unreadable by other processes
-- `disallowedTools: [WebFetch, WebSearch]` in `settings.local.json`
 - `~/.claudeignore` prevents scan-based credential inclusion in context
 - Bot application layer: `isPathAllowed()` + `checkCommandSafety()` as secondary guards
 
@@ -132,7 +131,7 @@ Problems superseded by `dec-20260416-003`: prob-20260416-001 (multi-session), pr
 These rules hold regardless of implementation:
 
 - The runtime is Claude Code on a VM, not a custom-built orchestrator
-- The runtime LLM does not get arbitrary shell access — all shell commands go through the allowlist
+- Shell commands auto-approve except remote writes and privilege escalation, which need user approval (`src/security.ts`)
 - Filesystem writes go only through policy-controlled tools or confirmed user approval
 - The knowledge vault is a separate Git repository — Claude Code does not own it
 - The platform is scoped to a single user; multi-user support is explicitly out of scope until a haft decision supersedes `dec-20260320-001`

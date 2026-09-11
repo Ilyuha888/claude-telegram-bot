@@ -45,6 +45,28 @@ export const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const _rawAllowedUser = (process.env.TELEGRAM_ALLOWED_USER || "").trim();
 export const ALLOWED_USER: number = parseInt(_rawAllowedUser, 10);
 
+// ============== Multi-Session / Forum Topics (optional) ==============
+
+// Foundation for parallel per-conversation Claude sessions surfaced as
+// Telegram forum topics (see plan). Unset ⇒ every message resolves to the
+// same implicit ConversationKey per chat (src/conversation.ts), so behavior
+// stays byte-for-byte identical to today's single-DM session.
+export const GROUP_CHAT_ID: number | null = process.env.TELEGRAM_GROUP_CHAT_ID
+  ? parseInt(process.env.TELEGRAM_GROUP_CHAT_ID, 10)
+  : null;
+export const SESSION_IDLE_EVICT_MINUTES = parseInt(process.env.SESSION_IDLE_EVICT_MINUTES || "120", 10);
+export const TOPIC_IDLE_CLOSE_DAYS = parseInt(process.env.TOPIC_IDLE_CLOSE_DAYS || "7", 10);
+export const MAX_ACTIVE_TOPICS = parseInt(process.env.MAX_ACTIVE_TOPICS || "20", 10);
+// How often the topic lifecycle reaper scans (src/topic-reaper.ts). Five
+// minutes rather than mode-2's hourly tick: the smallest thing it enforces is
+// SESSION_IDLE_EVICT_MINUTES, and an hourly scan would round a two-hour
+// eviction to somewhere between two and three. Idle only, so the scan is a
+// map walk plus one topics.json read.
+export const TOPIC_REAPER_INTERVAL_MS = parseInt(
+  process.env.TOPIC_REAPER_INTERVAL_MS || String(5 * 60 * 1000),
+  10
+);
+
 export const WORKING_DIR = process.env.CLAUDE_WORKING_DIR || HOME;
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
@@ -54,20 +76,14 @@ export const BOT_DATA_DIR = process.env.BOT_DATA_DIR || `${HOME}/bot-data`;
 
 // ============== Claude CLI Path ==============
 
-// Auto-detect from PATH, or use environment override
-function findClaudeCli(): string {
-  const envPath = process.env.CLAUDE_CLI_PATH;
-  if (envPath) return envPath;
-
-  // Try to find claude in PATH using Bun.which
-  const whichResult = Bun.which("claude");
-  if (whichResult) return whichResult;
-
-  // Final fallback
-  return "/usr/local/bin/claude";
-}
-
-export const CLAUDE_CLI_PATH = findClaudeCli();
+// NOTE: the binary the SDK spawns is set by CLAUDE_CODE_PATH, read directly in
+// src/session.ts and assigned to options.pathToClaudeCodeExecutable. A former
+// CLAUDE_CLI_PATH export lived here and was never imported by anything, so
+// setting that env var appeared to work and did nothing. Removed rather than
+// wired up, because two env vars for one binary is how this drifted.
+// If CLAUDE_CODE_PATH is unset the SDK falls back to its own bundled CLI
+// (node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude), which is
+// several versions behind — so keep it set in .env.
 
 // ============== MCP Configuration ==============
 
@@ -143,6 +159,43 @@ if (sendFileEntry && !("type" in sendFileEntry)) {
   };
 }
 
+// Built-in servers that deliver output back to one specific conversation and
+// therefore need to know which one (see buildMcpServers below).
+const DELIVERY_MCP_SERVERS = ["ask-user", "send-file"] as const;
+
+/**
+ * Per-ClaudeSession MCP server configuration.
+ *
+ * ask-user and send-file write /tmp request files tagged with the chat (and
+ * forum topic) they belong to. They learn that target by reading the JSON at
+ * TELEGRAM_CONTEXT_FILE, which is allocated per ClaudeSession instance — so it
+ * cannot live in the module-scope MCP_SERVERS template, which every session
+ * would share. That shared-mutable-state shape is exactly the
+ * `process.env.TELEGRAM_CHAT_ID` clobber this replaces.
+ *
+ * This is safe because the Agent SDK spawns a fresh `claude` CLI per query()
+ * and passes it `--mcp-config <json>` built from `options.mcpServers`; the CLI
+ * then spawns its own MCP children with that env. No MCP subprocess is shared
+ * between two ClaudeSession instances.
+ *
+ * Returns a copy: the module-scope template is never mutated.
+ */
+export function buildMcpServers(
+  contextFile: string,
+): Record<string, McpServerConfig> {
+  const servers: Record<string, McpServerConfig> = { ...MCP_SERVERS };
+  for (const name of DELIVERY_MCP_SERVERS) {
+    const entry = servers[name];
+    // Skip HTTP-transport overrides from a user mcp-config.ts — they have no env.
+    if (!entry || "type" in entry) continue;
+    servers[name] = {
+      ...entry,
+      env: { ...(entry.env ?? {}), TELEGRAM_CONTEXT_FILE: contextFile },
+    };
+  }
+  return servers;
+}
+
 // Build safety prompt dynamically from ALLOWED_PATHS
 function buildSafetyPrompt(allowedPaths: string[]): string {
   const pathsList = allowedPaths
@@ -215,10 +268,15 @@ export const BLOCKED_PATTERNS = [
 // Query timeout (3 minutes)
 export const QUERY_TIMEOUT_MS = 180_000;
 
-// Context window budget for claude-sonnet-4-6 as served via the Agent SDK.
-// Empirically 1M — verified by observed Usage logs of >500K tokens in a single
-// turn without the API rejecting the prompt.
-export const CONTEXT_WINDOW_TOKENS = 1_000_000;
+// Fraction of the context window at which the bot warns.
+//
+// There used to be a CONTEXT_WINDOW_TOKENS = 1_000_000 constant here, claimed
+// to be "empirically verified". It wasn't: the >500K figures in the logs were
+// per-turn cumulative usage summed across API calls, not context occupancy, so
+// the measurement bug manufactured its own justification. The real window was
+// ~200K, which made this threshold unreachable — the warning could never fire.
+// The window now comes from the SDK at runtime via query.getContextUsage(),
+// which reports maxTokens for the model actually in use.
 export const CONTEXT_WARN_THRESHOLD = 0.85;
 
 // ============== Voice Transcription ==============
@@ -259,9 +317,63 @@ export const THINKING_DEEP_KEYWORDS = thinkingDeepKeywordsStr
   .split(",")
   .map((k) => k.trim().toLowerCase());
 
-// ============== Media Group Settings ==============
+// ============== Turn Batching ==============
 
-export const MEDIA_GROUP_TIMEOUT = 1000; // ms to wait for more photos in a group
+// A burst of messages — forwarded, or just typed faster than Claude answers —
+// is collected into ONE turn instead of one turn per message.
+//
+// TURN_BATCH_WINDOW_MS is a trailing debounce: each arriving message pushes the
+// dispatch out by this much, so quick successive messages settle into a single
+// turn. `0` disables burst batching entirely (a message dispatches as soon as
+// nothing else is mid-preparation) and is the rollback switch — a config
+// change, not a revert. Albums keep coalescing either way; see
+// MEDIA_GROUP_TIMEOUT below.
+export const TURN_BATCH_WINDOW_MS = parseInt(
+  process.env.TURN_BATCH_WINDOW_MS || "1500",
+  10
+);
+
+// Ceiling measured from the first buffered message, so a steady trickle of
+// messages can't defer the answer forever. Only *requests* a flush: a download
+// or transcription still in flight defers it until that message has joined.
+export const TURN_BATCH_MAX_WAIT_MS = parseInt(
+  process.env.TURN_BATCH_MAX_WAIT_MS || "15000",
+  10
+);
+
+// Flush early rather than drop. Must comfortably exceed one album (Telegram
+// caps those at 10) or every album would trip it.
+export const TURN_BATCH_MAX_ITEMS = parseInt(
+  process.env.TURN_BATCH_MAX_ITEMS || "25",
+  10
+);
+
+// Prompt weight, dominated by base64 media. Checked before appending, so the
+// cap bounds what is actually sent rather than being advisory.
+export const TURN_BATCH_MAX_BYTES = parseInt(
+  process.env.TURN_BATCH_MAX_BYTES || String(24 * 1024 * 1024),
+  10
+);
+
+// The "📥 Collecting…" card shown while messages are being gathered.
+//   always — whenever a message will actually wait (the default)
+//   multi  — only when it carries information: 2+ messages, or a turn already
+//            running. Use this if the card flickering on every single message
+//            grates.
+//   off    — never
+export const TURN_BATCH_CARD = ((): "always" | "multi" | "off" => {
+  const raw = (process.env.TURN_BATCH_CARD || "always").toLowerCase();
+  return raw === "multi" || raw === "off" ? raw : "always";
+})();
+
+// Window FLOOR for messages that arrived as one Telegram album.
+//
+// Not the same kind of setting as TURN_BATCH_WINDOW_MS above, which is why it
+// survives as its own constant: album coalescing is protocol handling — the
+// client splits one user action into N updates and never tells the bot how many
+// — whereas burst batching is a product decision. So albums must keep
+// coalescing when burst batching is switched off.
+export const MEDIA_GROUP_TIMEOUT = 1000;
 
 // ============== Telegram Message Limits ==============
 
@@ -269,6 +381,26 @@ export const TELEGRAM_MESSAGE_LIMIT = 4096; // Max characters per message
 export const TELEGRAM_SAFE_LIMIT = 4000; // Safe limit with buffer for formatting
 export const STREAMING_THROTTLE_MS = 500; // Throttle streaming updates
 export const BUTTON_LABEL_MAX_LENGTH = 30; // Max chars for inline button labels
+
+// ============== Rich Messages (Bot API 10.1/10.2) ==============
+
+// Master kill switch for the Rich Message output path (src/rich.ts). Off, the
+// bot behaves exactly as it did before Rich Messages existed: plain HTML +
+// sendChunkedMessages. Rollback is a config change, not a revert — set
+// RICH_MESSAGES_ENABLED=false and restart.
+export const RICH_MESSAGES_ENABLED =
+  (process.env.RICH_MESSAGES_ENABLED || "true").toLowerCase() !== "false";
+
+// Controls live draft streaming (sendRichMessageDraft) only. Off with the
+// master switch on: stream via the existing editMessageText path, still
+// finalize with sendRichMessage.
+export const RICH_STREAMING_ENABLED =
+  (process.env.RICH_STREAMING_ENABLED || "true").toLowerCase() !== "false";
+
+// Documented Rich Message character ceiling. Mirrors RICH_MESSAGE_CHAR_LIMIT
+// in src/rich.ts, which keeps its own copy so that module stays pure and
+// config-agnostic; the enforcement lives there (exceedsRichMessageLimits).
+export const RICH_MESSAGE_LIMIT = 32768;
 
 // ============== Audit Logging ==============
 
@@ -297,7 +429,40 @@ export const RATE_LIMIT_WINDOW = parseInt(
 // inside the container). Required for /resume and tryAutoResume() to keep
 // working after a reboot.
 export const SESSION_FILE = `${BOT_DATA_DIR}/chat-session-history.json`;
+// Forum topics spawned by the bot (thread_id → chat, name, session, activity).
+// Inert when TELEGRAM_GROUP_CHAT_ID is unset — nothing writes to it.
+export const TOPICS_FILE = `${BOT_DATA_DIR}/topics.json`;
 export const AUTO_RESUME_TTL_MS = parseInt(process.env.AUTO_RESUME_TTL_HOURS || "24", 10) * 60 * 60 * 1000;
+/**
+ * Auto-resume window for a conversation that lives in a forum topic, as
+ * opposed to a DM.
+ *
+ * Deliberately two orders of magnitude larger than the DM default, because the
+ * two are different objects. A DM is one rolling scratchpad, so "you probably
+ * moved on" is a fair guess after a day and a stale resume is confusing. A
+ * topic is a *named* thread the user opened on purpose and closes by hand —
+ * continuing it next week is the entire reason forum topics exist, so expiring
+ * it silently after 24h broke the feature's premise (observed: a "Daily focus"
+ * topic idle 31h answered from an empty context and said so).
+ *
+ * The cost is real and accepted: resume cost scales with transcript length and
+ * the prompt cache is 1h, so the first turn after a long gap re-reads the whole
+ * transcript at full price, and a long-lived topic will eventually need
+ * /compact. That trade is the user's to make, which is why this is an env var.
+ *
+ * Ceiling: 30 days is not arbitrary. Claude Code deletes its own transcript
+ * .jsonl files after `cleanupPeriodDays` (default 30), and resume needs that
+ * file. Raising this past the SDK's retention only buys session ids that fail
+ * on use — see the "session_gone" branch in ClaudeSession, which turns that
+ * failure into a clean fresh start instead of a red error.
+ */
+export const TOPIC_AUTO_RESUME_TTL_MS =
+  parseInt(process.env.TOPIC_AUTO_RESUME_TTL_HOURS || "720", 10) * 60 * 60 * 1000;
+
+/** The auto-resume window that applies to a conversation: topics get their own. */
+export function autoResumeTtlMs(threadId: number | undefined): number {
+  return threadId === undefined ? AUTO_RESUME_TTL_MS : TOPIC_AUTO_RESUME_TTL_MS;
+}
 export const RESTART_FILE = "/tmp/claude-telegram-restart.json";
 export const TEMP_DIR = "/tmp/telegram-bot";
 
@@ -317,6 +482,42 @@ export const REAPER_IDLE_THRESHOLD_MS = parseInt(
   process.env.REAPER_IDLE_THRESHOLD_MS || String(7 * 24 * 60 * 60 * 1000),
   10
 );
+
+// ============== Mode-2 Worktree Bootstrap ==============
+
+function csv(envValue: string | undefined, fallback: string[]): string[] {
+  if (!envValue) return fallback;
+  return envValue.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+// A fresh `git worktree add` contains tracked files only. These gitignored
+// paths are restored from the parent checkout so a session can actually build
+// and run the project — see src/mode2/worktree-bootstrap.ts.
+//
+// Symlinked (large, shared): note that installing inside a worktree therefore
+// mutates the parent's copy, which is the accepted trade for not duplicating
+// hundreds of megabytes per session.
+export const WORKTREE_LINK_PATHS = csv(process.env.WORKTREE_LINK_PATHS, [
+  "node_modules",
+  ".venv",
+  "venv",
+  "vendor",
+]);
+
+// Copied (small, may hold secrets). `.worktrees/` is gitignored so these can't
+// be staged from the parent repo.
+export const WORKTREE_COPY_PATHS = csv(process.env.WORKTREE_COPY_PATHS, [
+  ".env",
+  ".env.local",
+  ".claude/settings.local.json",
+]);
+
+// Whether /menu gives each session its own worktree + branch. Isolation was
+// removed in 76eefe1 because unbootstrapped worktrees were unusable; with the
+// bootstrap in place it is on by default again. Set to "false" for the flat
+// behaviour (spawn in the repo root, shared working tree).
+export const MODE2_MENU_WORKTREE =
+  (process.env.MODE2_MENU_WORKTREE || "true").toLowerCase() !== "false";
 
 // Ensure bot-data directory exists and is writable
 try {
@@ -356,6 +557,14 @@ if (_rawAllowedUser.includes(",")) {
 if (!_rawAllowedUser || Number.isNaN(ALLOWED_USER)) {
   console.error(
     "ERROR: TELEGRAM_ALLOWED_USER environment variable is required (your numeric Telegram user ID)."
+  );
+  process.exit(1);
+}
+
+if (process.env.TELEGRAM_GROUP_CHAT_ID && Number.isNaN(GROUP_CHAT_ID)) {
+  console.error(
+    "ERROR: TELEGRAM_GROUP_CHAT_ID must be a numeric Telegram chat ID (a supergroup with Topics enabled).\n" +
+    `       Got: ${JSON.stringify(process.env.TELEGRAM_GROUP_CHAT_ID)}`
   );
   process.exit(1);
 }

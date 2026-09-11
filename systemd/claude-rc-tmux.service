@@ -1,0 +1,70 @@
+#
+# Long-lived tmux server that owns the mode-2 Claude RC hosts.
+#
+# WHY THIS UNIT EXISTS
+# --------------------
+# RC hosts used to die every time claude-telegram-bot.service was restarted,
+# destroying live interactive sessions (three separate incidents). The cause is
+# not the process tree: the tmux server already daemonizes to PPid 1 and STILL
+# died. It is the cgroup. Everything the bot forks lands in
+# system.slice/claude-telegram-bot.service, and that unit has the default
+# KillMode=control-group, so `systemctl stop|restart` signals every process in
+# it. cgroup membership is inherited across fork() and can only be changed by
+# writing cgroup.procs, which uid 1000 cannot do — so setsid/nohup cannot help.
+#
+# The fix relies on one tmux property: panes inherit the *server's* cgroup, not
+# the client's, because the server forks them. Start the server from its own
+# unit and every session the bot subsequently creates lives here instead. The
+# bot still drives it entirely over the socket (/tmp/tmux-1000/default), which
+# is cgroup-agnostic, so src/mode2/sh.ts needed no change to its tmux calls.
+#
+# INSTALL (manual, root — the bot's user is deliberately not in sudoers):
+#   sudo cp systemd/claude-rc-tmux.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl stop claude-telegram-bot   # it owns the socket; must go first
+#   sudo systemctl start claude-rc-tmux
+#   sudo systemctl start claude-telegram-bot
+#
+# Leave this unit alone during deploys. Restarting the bot is now safe for
+# sessions; restarting THIS unit kills every one of them.
+#
+[Unit]
+Description=Long-lived tmux server owning Claude RC hosts (mode-2)
+# Deliberately no After=/Wants= on claude-telegram-bot.service. The bot detects
+# this server lazily (assertTmuxServerExternal in src/mode2/sh.ts), so neither
+# unit depends on the other and the bot still serves mode-1 if this is absent.
+
+[Service]
+Type=simple
+User=assistant
+WorkingDirectory=/home/<user>
+Environment=HOME=/home/<user>
+Environment=PATH=/home/<user>/.local/bin:/home/<user>/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# -D runs the server in the foreground (so Type=simple supervises it properly)
+# AND turns exit-empty off. The second half is load-bearing: without it the
+# server would exit as soon as the last session closed, so reaping the final RC
+# host would take the server with it.
+ExecStart=/usr/bin/tmux -D
+# Makes `systemctl stop` mean "kill every session", explicitly rather than by
+# side effect. This unit is the deliberate big red button.
+ExecStop=/usr/bin/tmux kill-server
+
+Restart=always
+RestartSec=5
+SyslogIdentifier=claude-rc-tmux
+
+# NEVER add any of the following:
+#   PrivateTmp=      — the bot and this server would see different /tmp, so the
+#                      socket paths diverge, the bot silently starts its OWN
+#                      server inside its own cgroup, and the bug returns with
+#                      no visible symptom. TMUX_TMPDIR is set nowhere in the
+#                      codebase precisely so both sides agree on the default.
+#   ProtectHome=     — RC hosts need ~/.claude for OAuth and settings.
+#   EnvironmentFile= — the bot pushes only the vars RC hosts need, via
+#                      `tmux set-environment -g` (pushTmuxEnvironment). Loading
+#                      the bot's .env here would put TELEGRAM_BOT_TOKEN and
+#                      OPENAI_API_KEY back into every RC host's environ.
+
+[Install]
+WantedBy=multi-user.target

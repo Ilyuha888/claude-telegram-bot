@@ -5,12 +5,15 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
+import { convKeyFromCtx } from "../conversation";
 import { ALLOWED_USER, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
-import { handleProcessingError } from "./media-group";
+import {
+  auditLogRateLimit,
+  buildMessageContext,
+  startTypingIndicator,
+} from "../utils";
+import { beginArrival, endArrival, hasPending, submitPart } from "../turn/collector";
 
 // Max video size (50MB - reasonable for short clips/voice memos)
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
@@ -69,97 +72,80 @@ export async function handleVideo(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3. Rate limit check
-  const [allowed, retryAfter] = rateLimiter.check(userId);
-  if (!allowed) {
-    await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(
-      `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-    );
-    return;
-  }
+  const convKey = convKeyFromCtx(ctx);
 
-  console.log(`Received video from @${username}`);
-
-  // 4. Download video
-  let videoPath: string;
-  const statusMsg = await ctx.reply("📹 Downloading video...");
-
-  try {
-    videoPath = await downloadVideo(ctx);
-  } catch (error) {
-    console.error("Failed to download video:", error);
-    await ctx.api.editMessageText(
-      chatId,
-      statusMsg.message_id,
-      "❌ Failed to download video."
-    );
-    return;
-  }
-
-  // 5. Process video
-  const stopProcessing = session.startProcessing();
+  // 3. Claim an arrival slot, synchronously, before the download.
+  const seq = beginArrival(convKey);
   const typing = startTypingIndicator(ctx);
 
   try {
-    // Update status
-    await ctx.api.editMessageText(
-      chatId,
-      statusMsg.message_id,
-      "📹 Processing video..."
-    );
-
-    // Build prompt with video path
-    const prompt = caption
-      ? `Here's a video file at path: ${videoPath}\n\nUser says: ${caption}`
-      : `I've received a video file at path: ${videoPath}\n\nPlease transcribe it for me.`;
-
-    // Set conversation title (if new session)
-    if (!session.isActive) {
-      const rawTitle = caption || "[Video]";
-      const title =
-        rawTitle.length > 50 ? rawTitle.slice(0, 47) + "..." : rawTitle;
-      session.conversationTitle = title;
+    // 4. Rate limit check — skipped mid-burst, see voice.ts.
+    if (!hasPending(convKey)) {
+      const [allowed, retryAfter] = rateLimiter.check(userId);
+      if (!allowed) {
+        await auditLogRateLimit(userId, username, retryAfter!);
+        await ctx.reply(
+          `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+        );
+        return;
+      }
     }
 
-    // Create streaming state
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
+    console.log(`Received video from @${username}`);
 
-    const response = await session.sendMessageStreaming(
-      prompt,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
-    );
+    // 5. Download video
+    const statusMsg = await ctx.reply("📹 Downloading video...");
 
-    await auditLog(userId, username, "VIDEO", caption || "[video]", response);
+    let videoPath: string;
+    try {
+      videoPath = await downloadVideo(ctx);
+    } catch (error) {
+      console.error("Failed to download video:", error);
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        "❌ Failed to download video."
+      );
+      return;
+    }
 
-    // Delete status message
+    // The download status is replaced by the turn's own output, so it goes now
+    // rather than after an answer that may be a whole batch away.
     try {
       await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
     } catch {
       // Ignore deletion errors
     }
+
+    // 6. Build the prompt. Through buildMessageContext, so a video inherits the
+    // provenance headers everything else gets — a forwarded clip used to arrive
+    // as a bare path with no [Forwarded from …] — and so the path is advertised
+    // in the same [Attachments on disk: …] block the persistence contract in
+    // CLAUDE.md describes, rather than in prose only this handler wrote.
+    //
+    // The file is deliberately NOT listed as a cleanup path: the
+    // video-processing skill reads it from disk, and temp cleanup is left to the
+    // directory, exactly as before.
+    const context = buildMessageContext(ctx, { attachments: [videoPath] });
+    const prompt = caption
+      ? context
+      : `${context}\n\nPlease transcribe it for me.`;
+
+    submitPart(ctx, convKey, {
+      kind: "video",
+      seq,
+      messageId: ctx.message?.message_id,
+      text: prompt,
+      media: [],
+      audit: { kind: "VIDEO", summary: caption || "[video]" },
+      titleSeed: caption || "[Video]",
+      bytes: prompt.length,
+    });
   } catch (error) {
     console.error("Video processing error:", error);
-
-    // Delete status message on error
-    try {
-      await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
-    } catch {
-      // Ignore
-    }
-
-    await handleProcessingError(ctx, error, []);
+    await ctx.reply("❌ Failed to process video.");
   } finally {
-    stopProcessing();
     typing.stop();
-
-    // Note: We don't delete the video file immediately because video-processing
-    // skill needs to access it. The skill should handle cleanup, or we rely on
-    // temp directory cleanup
+    endArrival(convKey);
   }
 }

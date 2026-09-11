@@ -1,19 +1,25 @@
 /**
  * Document handler for Claude Telegram Bot.
  *
- * Supports PDFs and text files with media group buffering.
+ * Supports PDFs, archives and text files. Each document becomes one part of the
+ * next turn; several sent as one album coalesce through the collector rather
+ * than through a buffer of their own.
  * PDF extraction uses pdftotext CLI (install via: brew install poppler)
  */
 
 import type { Context } from "grammy";
-import type { UserContentBlock } from "../session";
-import { session } from "../session";
+import type { TurnPart } from "../turn/part";
+import { convKeyFromCtx } from "../conversation";
 import { ALLOWED_USER, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, buildMessageContext, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
-import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
+import { auditLogRateLimit, buildMessageContext, startTypingIndicator } from "../utils";
 import { isAudioFile, processAudioFile } from "./audio";
+import {
+  beginArrival,
+  endArrival,
+  hasPending,
+  submitPart,
+} from "../turn/collector";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -45,13 +51,6 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 // Max content from archive (50K chars total)
 const MAX_ARCHIVE_CONTENT = 50000;
-
-// Create document-specific media group buffer
-const documentBuffer = createMediaGroupBuffer({
-  emoji: "📄",
-  itemLabel: "document",
-  itemLabelPlural: "documents",
-});
 
 /**
  * Download a document and return the local path.
@@ -207,33 +206,39 @@ async function extractArchiveContent(
 }
 
 /**
- * Process an archive file.
+ * A part with everything but its place in the arrival order — the preparers
+ * build the content, `handleDocument` stamps the seq and the album id it
+ * already holds.
  */
-async function processArchive(
+type PreparedPart = Omit<TurnPart, "seq" | "mediaGroupId">;
+
+/**
+ * Extract an archive and inline its tree and readable text into one part.
+ *
+ * The extraction directory is removed as soon as the prompt is built: its
+ * contents are already inlined, and nothing downstream reads it. That used to
+ * happen after the turn, which is no longer a bounded wait.
+ */
+async function prepareArchivePart(
   ctx: Context,
   archivePath: string,
   fileName: string,
-  caption: string | undefined,
-  userId: number,
-  username: string,
-  chatId: number
-): Promise<void> {
-  const stopProcessing = session.startProcessing();
-  const typing = startTypingIndicator(ctx);
-
-  // Show extraction progress
+  caption: string | undefined
+): Promise<PreparedPart | null> {
+  // The one status message this handler still posts. Extraction is the only
+  // preparation step slow enough to look like a hang, and it has a real result
+  // to report. It goes away at submit time, like every other handler's — the
+  // answer itself may be a whole burst away.
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
     parse_mode: "HTML",
   });
 
   try {
-    // Extract archive
     console.log(`Extracting archive: ${fileName}`);
     const extractDir = await extractArchive(archivePath, fileName);
     const { tree, contents } = await extractArchiveContent(extractDir);
     console.log(`Extracted: ${tree.length} files, ${contents.length} readable`);
 
-    // Update status
     await ctx.api.editMessageText(
       statusMsg.chat.id,
       statusMsg.message_id,
@@ -241,235 +246,129 @@ async function processArchive(
       { parse_mode: "HTML" }
     );
 
-    // Build prompt
     const treeStr = tree.length > 0 ? tree.join("\n") : "(empty)";
     const contentsStr =
       contents.length > 0
         ? contents.map((c) => `--- ${c.name} ---\n${c.content}`).join("\n\n")
         : "(no readable text files)";
 
-    const prompt = caption
-      ? `Archive: ${fileName}\n\nFile tree (${tree.length} files):\n${treeStr}\n\nExtracted contents:\n${contentsStr}\n\n---\n\n${caption}`
-      : `Please analyze this archive (${fileName}):\n\nFile tree (${tree.length} files):\n${treeStr}\n\nExtracted contents:\n${contentsStr}`;
+    const context = buildMessageContext(ctx, { attachments: [archivePath] });
+    const text = `Archive: ${fileName}\n\nFile tree (${tree.length} files):\n${treeStr}\n\nExtracted contents:\n${contentsStr}\n\n---\n\n${context}`;
 
-    // Set conversation title (if new session)
-    if (!session.isActive) {
-      const rawTitle = caption || `[Archivio: ${fileName}]`;
-      const title =
-        rawTitle.length > 50 ? rawTitle.slice(0, 47) + "..." : rawTitle;
-      session.conversationTitle = title;
-    }
-
-    // Create streaming state
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
-
-    const response = await session.sendMessageStreaming(
-      prompt,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
-    );
-
-    await auditLog(
-      userId,
-      username,
-      "ARCHIVE",
-      `[${fileName}] ${caption || ""}`,
-      response
-    );
-
-    // Cleanup
     await Bun.$`rm -rf ${extractDir}`.quiet();
 
-    // Delete status message
+    return {
+      kind: "archive",
+      messageId: ctx.message?.message_id,
+      text,
+      media: [],
+      audit: { kind: "ARCHIVE", summary: `[${fileName}] ${caption || ""}` },
+      titleSeed: caption || `[Archivio: ${fileName}]`,
+      bytes: text.length,
+    };
+  } catch (error) {
+    console.error("Archive processing error:", error);
+    await ctx.reply(
+      `❌ Failed to process archive: ${String(error).slice(0, 100)}`
+    );
+    return null;
+  } finally {
     try {
       await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
     } catch {
       // Ignore deletion errors
     }
-  } catch (error) {
-    console.error("Archive processing error:", error);
-    // Delete status message on error
-    try {
-      await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
-    } catch {
-      // Ignore
-    }
-    await ctx.reply(
-      `❌ Failed to process archive: ${String(error).slice(0, 100)}`
-    );
-  } finally {
-    stopProcessing();
-    typing.stop();
   }
 }
 
-
 /**
- * Process a PDF using native SDK content blocks (no pdftotext dependency).
+ * A PDF, as a native document content block — no pdftotext dependency.
  */
-async function processPdfBlocks(
+async function preparePdfPart(
   ctx: Context,
   pdfPath: string,
   fileName: string,
-  caption: string | undefined,
-  userId: number,
-  username: string,
-  chatId: number
-): Promise<void> {
-  const stopProcessing = session.startProcessing();
-  const typing = startTypingIndicator(ctx);
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
-
+  caption: string | undefined
+): Promise<PreparedPart | null> {
+  let base64Data: string;
   try {
     const data = await Bun.file(pdfPath).arrayBuffer();
-    const base64Data = Buffer.from(data).toString('base64');
+    base64Data = Buffer.from(data).toString("base64");
+  } catch (error) {
+    console.error(`Failed to read PDF ${pdfPath}:`, error);
+    await ctx.reply("❌ Failed to read the downloaded document.");
+    return null;
+  }
 
-    const blocks: UserContentBlock[] = [
+  const text = `Document: ${fileName}\n\n${buildMessageContext(ctx, {
+    attachments: [pdfPath],
+  })}`;
+
+  return {
+    kind: "pdf",
+    messageId: ctx.message?.message_id,
+    text,
+    media: [
       {
-        type: 'text',
-        text: caption
-          ? `Document: ${fileName}\n\n${caption}`
-          : `Please analyze this document: ${fileName}`
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: base64Data,
+        },
       },
-      {
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data: base64Data }
-      }
-    ];
-
-    if (!session.isActive) {
-      const rawTitle = caption || `[PDF: ${fileName}]`;
-      session.conversationTitle = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
-    }
-
-    const response = await session.sendMessageStreaming(
-      blocks,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
-    );
-
-    await auditLog(userId, username, "DOCUMENT", `[PDF: ${fileName}] ${caption || ''}`, response);
-  } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages);
-  } finally {
-    stopProcessing();
-    typing.stop();
-  }
+    ],
+    audit: { kind: "DOCUMENT", summary: `[PDF: ${fileName}] ${caption || ""}` },
+    titleSeed: caption || `[PDF: ${fileName}]`,
+    bytes: base64Data.length + text.length,
+  };
 }
 
 /**
- * Process documents with Claude.
+ * A text-ish document, inlined.
  */
-async function processDocuments(
+async function prepareTextPart(
   ctx: Context,
-  documents: Array<{ path: string; name: string; content: string }>,
+  docPath: string,
+  fileName: string,
   caption: string | undefined,
-  userId: number,
-  username: string,
-  chatId: number
-): Promise<void> {
-  // Mark processing started
-  const stopProcessing = session.startProcessing();
-
-  // Build prompt
-  let prompt: string;
-  if (documents.length === 1) {
-    const doc = documents[0]!;
-    prompt = caption
-      ? `Document: ${doc.name}\n\nContent:\n${doc.content}\n\n---\n\n${caption}`
-      : `Please analyze this document (${doc.name}):\n\n${doc.content}`;
-  } else {
-    const docList = documents
-      .map((d, i) => `--- Document ${i + 1}: ${d.name} ---\n${d.content}`)
-      .join("\n\n");
-    prompt = caption
-      ? `${documents.length} Documents:\n\n${docList}\n\n---\n\n${caption}`
-      : `Please analyze these ${documents.length} documents:\n\n${docList}`;
-  }
-
-  // Set conversation title (if new session)
-  if (!session.isActive) {
-    const docName = documents[0]?.name || "[Documento]";
-    const rawTitle = caption || `[Documento: ${docName}]`;
-    const title =
-      rawTitle.length > 50 ? rawTitle.slice(0, 47) + "..." : rawTitle;
-    session.conversationTitle = title;
-  }
-
-  // Start typing
-  const typing = startTypingIndicator(ctx);
-
-  // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
-
+  mimeType: string | undefined
+): Promise<PreparedPart | null> {
+  let content: string;
   try {
-    const response = await session.sendMessageStreaming(
-      prompt,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
-    );
-
-    await auditLog(
-      userId,
-      username,
-      "DOCUMENT",
-      `[${documents.length} docs] ${caption || ""}`,
-      response
-    );
+    content = await extractText(docPath, mimeType);
   } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages);
-  } finally {
-    stopProcessing();
-    typing.stop();
-  }
-}
-
-/**
- * Process document paths by extracting text and calling processDocuments.
- */
-async function processDocumentPaths(
-  ctx: Context,
-  paths: string[],
-  caption: string | undefined,
-  userId: number,
-  username: string,
-  chatId: number
-): Promise<void> {
-  // Extract text from all documents
-  const documents: Array<{ path: string; name: string; content: string }> = [];
-
-  for (const path of paths) {
-    try {
-      const name = path.split("/").pop() || "document";
-      const content = await extractText(path);
-      documents.push({ path, name, content });
-    } catch (error) {
-      console.error(`Failed to extract ${path}:`, error);
-    }
+    console.error("Failed to extract document:", error);
+    await ctx.reply(
+      `❌ Failed to process document: ${String(error).slice(0, 100)}`
+    );
+    return null;
   }
 
-  if (documents.length === 0) {
-    await ctx.reply("❌ Failed to extract any documents.");
-    return;
-  }
+  const text = `Document: ${fileName}\n\nContent:\n${content}\n\n---\n\n${buildMessageContext(
+    ctx,
+    { attachments: [docPath] }
+  )}`;
 
-  await processDocuments(ctx, documents, caption, userId, username, chatId);
+  return {
+    kind: "doctext",
+    messageId: ctx.message?.message_id,
+    text,
+    media: [],
+    audit: { kind: "DOCUMENT", summary: `[${fileName}] ${caption || ""}` },
+    titleSeed: caption || `[Documento: ${fileName}]`,
+    bytes: text.length,
+  };
 }
 
 /**
  * Handle incoming document messages.
+ *
+ * Several documents sent as one album are no longer buffered here: each is an
+ * ordinary part carrying the album's `media_group_id`, which the collector reads
+ * as a floor on the debounce window. The visible change is that every document's
+ * own caption now reaches Claude bound to that document — the old buffer kept
+ * one caption for the whole group.
  */
 export async function handleDocument(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -477,6 +376,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   const doc = ctx.message?.document;
   const mediaGroupId = ctx.message?.media_group_id;
+  const caption = ctx.message?.caption;
 
   if (!userId || !chatId || !doc) {
     return;
@@ -501,43 +401,10 @@ export async function handleDocument(ctx: Context): Promise<void> {
   const isText =
     TEXT_EXTENSIONS.includes(extension) || doc.mime_type?.startsWith("text/");
   const isArchiveFile = isArchive(fileName);
+  const isAudio =
+    !isPdf && !isText && !isArchiveFile && isAudioFile(fileName, doc.mime_type);
 
-  // Check if it's an audio file sent as a document
-  if (!isPdf && !isText && !isArchiveFile && isAudioFile(fileName, doc.mime_type)) {
-    console.log(`Received audio document: ${fileName} from @${username}`);
-
-    // Rate limit check
-    const [allowed, retryAfter] = rateLimiter.check(userId);
-    if (!allowed) {
-      await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
-        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-      );
-      return;
-    }
-
-    // Download and process as audio
-    let docPath: string;
-    try {
-      docPath = await downloadDocument(ctx);
-    } catch (error) {
-      console.error("Failed to download audio document:", error);
-      await ctx.reply("❌ Failed to download audio file.");
-      return;
-    }
-
-    await processAudioFile(
-      ctx,
-      docPath,
-      buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
-      userId,
-      username,
-      chatId
-    );
-    return;
-  }
-
-  if (!isPdf && !isText && !isArchiveFile) {
+  if (!isPdf && !isText && !isArchiveFile && !isAudio) {
     await ctx.reply(
       `❌ Unsupported file type: ${extension || doc.mime_type}\n\n` +
         `Supported: PDF, archives (${ARCHIVE_EXTENSIONS.join(
@@ -547,94 +414,70 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Download document
-  let docPath: string;
+  const convKey = convKeyFromCtx(ctx);
+
+  // 4. Claim an arrival slot. Everything above is synchronous, so this still
+  // happens before the handler's first await — what R1 requires.
+  const seq = beginArrival(convKey);
+  const typing = startTypingIndicator(ctx);
+
   try {
-    docPath = await downloadDocument(ctx);
-  } catch (error) {
-    console.error("Failed to download document:", error);
-    await ctx.reply("❌ Failed to download document.");
-    return;
-  }
-
-  // 5. Archive files - process separately (no media group support)
-  if (isArchiveFile) {
-    console.log(`Received archive: ${fileName} from @${username}`);
-    const [allowed, retryAfter] = rateLimiter.check(userId);
-    if (!allowed) {
-      await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
-        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-      );
-      return;
+    // 5. Rate limit. Skipped mid-burst, which is also what keeps an album of
+    // documents from being charged once per file — the rule the old media-group
+    // buffer applied by checking only its first item.
+    if (!hasPending(convKey)) {
+      const [allowed, retryAfter] = rateLimiter.check(userId);
+      if (!allowed) {
+        await auditLogRateLimit(userId, username, retryAfter!);
+        await ctx.reply(
+          `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+        );
+        return;
+      }
     }
 
-    await processArchive(
-      ctx,
-      docPath,
-      fileName,
-      buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
-      userId,
-      username,
-      chatId
+    console.log(
+      `Received ${isAudio ? "audio document" : isArchiveFile ? "archive" : "document"}: ${fileName} from @${username}`
     );
-    return;
-  }
 
-  // 6. Single document - process immediately
-  if (!mediaGroupId) {
-    console.log(`Received document: ${fileName} from @${username}`);
-    // Rate limit
-    const [allowed, retryAfter] = rateLimiter.check(userId);
-    if (!allowed) {
-      await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
-        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-      );
-      return;
-    }
-
-    // PDFs: use native content blocks (no pdftotext dependency)
-    if (isPdf) {
-      await processPdfBlocks(
-        ctx,
-        docPath,
-        fileName,
-        buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
-        userId,
-        username,
-        chatId
-      );
-      return;
-    }
-
-    // Text files: inline text extraction
+    // 6. Download
+    let docPath: string;
     try {
-      const content = await extractText(docPath, doc.mime_type);
-      await processDocuments(
-        ctx,
-        [{ path: docPath, name: fileName, content }],
-        buildMessageContext(ctx, { attachments: [docPath] }) || undefined,
-        userId,
-        username,
-        chatId
-      );
+      docPath = await downloadDocument(ctx);
     } catch (error) {
-      console.error("Failed to extract document:", error);
+      console.error("Failed to download document:", error);
       await ctx.reply(
-        `❌ Failed to process document: ${String(error).slice(0, 100)}`
+        isAudio
+          ? "❌ Failed to download audio file."
+          : "❌ Failed to download document."
       );
+      return;
     }
-    return;
-  }
 
-  // 7. Media group - buffer with timeout
-  await documentBuffer.addToGroup(
-    mediaGroupId,
-    docPath,
-    ctx,
-    userId,
-    username,
-    processDocumentPaths
-  );
+    // 7. Audio sent as a document: transcription owns the rest. The path is
+    // advertised to the agent, so the file has to outlive transcription —
+    // processAudioFile hands it to the turn to clean up. The arrival stays this
+    // handler's (see the contract on processAudioFile).
+    if (isAudio) {
+      await processAudioFile(ctx, docPath, chatId, seq, [docPath]);
+      return;
+    }
+
+    // 8. One document, one part.
+    const prepared = isArchiveFile
+      ? await prepareArchivePart(ctx, docPath, fileName, caption)
+      : isPdf
+        ? await preparePdfPart(ctx, docPath, fileName, caption)
+        : await prepareTextPart(ctx, docPath, fileName, caption, doc.mime_type);
+
+    if (prepared) {
+      submitPart(ctx, convKey, { ...prepared, seq, mediaGroupId });
+    }
+  } catch (error) {
+    console.error("Document processing error:", error);
+    await ctx.reply("❌ Failed to process document.");
+  } finally {
+    typing.stop();
+    endArrival(convKey);
+  }
 }

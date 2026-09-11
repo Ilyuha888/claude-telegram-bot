@@ -1,21 +1,32 @@
 /**
  * Text message handler for Claude Telegram Bot.
+ *
+ * Prepares the message and hands it to the turn collector, which decides
+ * whether it travels alone or with the rest of a burst. Everything after that —
+ * title, streaming, retry, audit, cleanup — is `runTurn` in src/turn.
+ *
+ * This handler must never await the turn: the collector's flush runs outside
+ * grammY's `sequentialize` middleware precisely because awaiting it from in
+ * here would deadlock (see the header of src/turn/collector.ts).
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
+import { convKeyFromCtx } from "../conversation";
 import { ALLOWED_USER } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
-  auditLog,
   buildMessageContext,
   auditLogRateLimit,
   checkInterrupt,
-  classifyClaudeError,
-  formatClaudeErrorReply,
-  startTypingIndicator,
 } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
+import {
+  beginArrival,
+  endArrival,
+  submitPart,
+  flushNow,
+  dropPending,
+  hasPending,
+} from "../turn/collector";
 
 /**
  * Handle incoming text messages.
@@ -24,116 +35,78 @@ export async function handleText(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
-  let message = buildMessageContext(ctx);
 
-  if (!userId || !message || !chatId) {
+  if (!userId || !chatId) {
     return;
   }
 
-  // 1. Authorization check
+  // 1. Authorization check — before the collector learns this conversation
+  // exists, so unauthorized traffic can't create buffers.
   if (!isAuthorized(userId, ALLOWED_USER)) {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
     return;
   }
 
-  // 2. Check for interrupt prefix
-  message = await checkInterrupt(message);
-  if (!message.trim()) {
-    return;
-  }
+  const convKey = convKeyFromCtx(ctx);
 
-  // 3. Rate limit check
-  const [allowed, retryAfter] = rateLimiter.check(userId);
-  if (!allowed) {
-    await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(
-      `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-    );
-    return;
-  }
+  // 2. Claim an arrival slot. Synchronous, before the first await: the batch is
+  // ordered by this number, and the count of outstanding arrivals is what stops
+  // a fast message from being dispatched without a slow one that arrived first.
+  const seq = beginArrival(convKey);
 
-  // 4. Store message for retry
-  session.lastMessage = message;
+  try {
+    const built = buildMessageContext(ctx);
+    if (!built) return;
 
-  // 5. Set conversation title from first message (if new session)
-  if (!session.isActive) {
-    // Truncate title to ~50 chars
-    const title =
-      message.length > 50 ? message.slice(0, 47) + "..." : message;
-    session.conversationTitle = title;
-  }
-
-  // 6. Mark processing started
-  const stopProcessing = session.startProcessing();
-
-  // 7. Start typing indicator
-  const typing = startTypingIndicator(ctx);
-
-  // 8. Create streaming state and callback
-  let state = new StreamingState();
-  let statusCallback = createStatusCallback(ctx, state);
-
-  // 9. Send to Claude with retry logic for crashes
-  const MAX_RETRIES = 1;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const response = await session.sendMessageStreaming(
-        message,
-        username,
-        userId,
-        statusCallback,
-        chatId,
-        ctx
-      );
-
-      // 10. Audit log
-      await auditLog(userId, username, "TEXT", message, response);
-      break; // Success - exit retry loop
-    } catch (error) {
-      const errorStr = String(error);
-      const isClaudeCodeCrash = errorStr.includes("exited with code");
-
-      // Clean up any partial messages from this attempt
-      for (const toolMsg of state.toolMessages) {
-        try {
-          await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-        } catch {
-          // Ignore cleanup errors
+    // 3. `!` prefix. checkInterrupt aborts a running query; `!stop` reduces to
+    // the empty string, which means "stop and send nothing".
+    const wasBang = built.startsWith("!");
+    const message = await checkInterrupt(built, ctx);
+    if (!message.trim()) {
+      if (wasBang) {
+        const dropped = await dropPending(convKey, "stopped");
+        if (dropped > 0) {
+          console.log(`[text] !stop discarded ${dropped} buffered message(s)`);
         }
       }
-
-      // Retry on Claude Code crash (not user cancellation)
-      if (isClaudeCodeCrash && attempt < MAX_RETRIES) {
-        console.log(
-          `Claude Code crashed, retrying (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`
-        );
-        await session.kill(); // Clear corrupted session
-        await ctx.reply(`⚠️ Claude crashed, retrying...`);
-        // Reset state for retry
-        state = new StreamingState();
-        statusCallback = createStatusCallback(ctx, state);
-        continue;
-      }
-
-      // Final attempt failed or non-retryable error
-      console.error("Error processing message:", error);
-
-      const kind = classifyClaudeError(error);
-      if (kind === "cancellation") {
-        // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-        const wasInterrupt = session.consumeInterruptFlag();
-        if (!wasInterrupt) {
-          await ctx.reply(formatClaudeErrorReply(error));
-        }
-      } else {
-        await ctx.reply(formatClaudeErrorReply(error));
-      }
-      break; // Exit loop after handling error
+      return;
     }
-  }
 
-  // 11. Cleanup
-  stopProcessing();
-  typing.stop();
+    // 4. Rate limit. Skipped while a burst is already collecting: forwarding 25
+    // messages is one user action, and charging it 25 times against a 20-per-60s
+    // bucket would silently drop the tail. Same "charge the first item only"
+    // rule albums have always used.
+    if (!hasPending(convKey)) {
+      const [allowed, retryAfter] = rateLimiter.check(userId);
+      if (!allowed) {
+        await auditLogRateLimit(userId, username, retryAfter!);
+        await ctx.reply(
+          `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+        );
+        return;
+      }
+    }
+
+    // 5. Hand it over. Returns immediately — the turn runs from a timer.
+    submitPart(ctx, convKey, {
+      kind: "text",
+      seq,
+      messageId: ctx.message?.message_id,
+      text: message,
+      media: [],
+      audit: { kind: "TEXT", summary: message },
+      titleSeed: message,
+      lastMessageText: message,
+      bytes: message.length,
+    });
+
+    // `!` means now. Note it joins the buffer first and then forces the flush,
+    // rather than jumping the queue: dispatching it alone would orphan the
+    // earlier messages behind a turn they were part of.
+    if (wasBang) flushNow(convKey);
+  } finally {
+    // Never skip this. An arrival that is counted and never released stalls
+    // every later message in the conversation — silently, with the card up.
+    endArrival(convKey);
+  }
 }

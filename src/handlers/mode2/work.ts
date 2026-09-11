@@ -6,6 +6,8 @@ import { ALLOWED_USER, REPOS_DIR } from "../../config";
 import { isAuthorized, isPathAllowed } from "../../security";
 import { auditLog } from "../../utils";
 import { escapeHtml } from "../../formatting";
+import { loadRuntimeConfig } from "../../runtime-config";
+import { bootstrapWorktree, summarizeBootstrap, type BootstrapResult } from "../../mode2/worktree-bootstrap";
 import { makeSlug, tmuxNameFor, rcNameFor } from "../../mode2/slug";
 import * as sh from "../../mode2/sh";
 import * as store from "../../mode2/store";
@@ -109,22 +111,36 @@ export async function handleWork(ctx: Context): Promise<void> {
   const tmuxName = tmuxNameFor(slug);
   const rcName = rcNameFor(slug);
   let worktreeCreated = false;
+  let bootstrap: BootstrapResult | null = null;
+  let startNote = "";
 
   await ctx.reply(`⏳ Spawning session <code>${escapeHtml(slug)}</code>…`, { parse_mode: "HTML" });
 
   try {
     // Create worktree if requested
     if (worktreePath) {
-      const wt = await sh.gitWorktreeAdd(repoPath, worktreePath, branch);
+      // An explicit branch argument wins; otherwise branch from the freshest
+      // remote state rather than whatever the local checkout is sitting on.
+      let startRef = branch;
+      if (!startRef) {
+        const start = await sh.gitFreshStartPoint(repoPath);
+        startRef = start.ref;
+        startNote = start.note;
+      }
+      const wt = await sh.gitWorktreeAdd(repoPath, worktreePath, startRef, `session/${slug}`);
       if (!wt.ok) {
         throw new WorktreeExists(worktreePath);
       }
       worktreeCreated = true;
+      // Restore the gitignored files a bare worktree lacks, or the session
+      // lands in a checkout it cannot build or run.
+      bootstrap = await bootstrapWorktree(repoPath, worktreePath);
     }
 
     // Spawn RC server under tmux
     const spawnCwd = worktreePath ?? cwd;
-    const spawnResult = await sh.tmuxNewSession(tmuxName, spawnCwd, rcName);
+    const { model } = await loadRuntimeConfig();
+    const spawnResult = await sh.tmuxNewSession(tmuxName, spawnCwd, rcName, model);
     if (!spawnResult.ok) {
       throw new SpawnFailed(slug, spawnResult.stderr);
     }
@@ -158,13 +174,30 @@ export async function handleWork(ctx: Context): Promise<void> {
 
     await auditLog(userId, username, "mode2.work.spawn", `slug=${slug} repo=${repo} worktree=${worktreePath ?? "none"}`);
 
+    // Try to get the RC session URL (Claude Code Remote link) from the tmux pane
+    let rcUrl: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      rcUrl = await sh.getRcSessionUrl(tmuxName);
+      if (rcUrl) break;
+    }
+
     const lines = [
       `✅ Session spawned: <code>${escapeHtml(slug)}</code>`,
       `Repo: <code>${escapeHtml(repo)}</code>`,
       `CWD: <code>${escapeHtml(spawnCwd)}</code>`,
     ];
-    if (worktreePath) lines.push(`Worktree: <code>${escapeHtml(worktreePath)}</code>`);
-    lines.push(`\nConnect via Cloud Code Remote → session name: <code>${escapeHtml(rcName)}</code>`);
+    if (worktreePath) {
+      lines.push(`Worktree: <code>${escapeHtml(worktreePath)}</code>`);
+      if (startNote) lines.push(`Branched from: <code>${escapeHtml(startNote)}</code>`);
+      const bootLine = bootstrap ? summarizeBootstrap(bootstrap) : "";
+      if (bootLine) lines.push(`Bootstrap: ${escapeHtml(bootLine)}`);
+    }
+    if (rcUrl) {
+      lines.push(`\n🔗 <a href="${escapeHtml(rcUrl)}">Open in Cloud Code Remote</a>`);
+    } else {
+      lines.push(`\nConnect via Cloud Code Remote → session name: <code>${escapeHtml(rcName)}</code>`);
+    }
 
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
 

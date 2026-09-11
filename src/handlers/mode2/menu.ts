@@ -4,16 +4,18 @@ import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import { resolve, join } from "path";
 import { access } from "fs/promises";
-import { ALLOWED_USER, REPOS_DIR } from "../../config";
+import { ALLOWED_USER, MODE2_MENU_WORKTREE, REPOS_DIR } from "../../config";
 import { isAuthorized, isPathAllowed } from "../../security";
 import { auditLog } from "../../utils";
 import { escapeHtml } from "../../formatting";
+import { loadRuntimeConfig } from "../../runtime-config";
 import { listRepos } from "../../mode2/repos";
 import { makeSlug, tmuxNameFor, rcNameFor } from "../../mode2/slug";
 import * as sh from "../../mode2/sh";
 import * as store from "../../mode2/store";
 import type { WorkSession } from "../../mode2/types";
-import { TmuxMissing, SpawnFailed, WorktreeExists } from "../../mode2/errors";
+import { SpawnFailed, WorktreeExists } from "../../mode2/errors";
+import { bootstrapWorktree, summarizeBootstrap, type BootstrapResult } from "../../mode2/worktree-bootstrap";
 import * as notifStore from "../../mode2/notifications-store";
 import { renderNotificationsTab } from "./notifications";
 
@@ -239,11 +241,17 @@ async function spawnSession(ctx: Context, repo: string): Promise<void> {
   const slug = makeSlug(repo);
   const tmuxName = tmuxNameFor(slug);
   const rcName = rcNameFor(slug);
-  // Each session gets its own worktree + branch named after the slug
-  const worktreePath = resolve(join(repoPath, ".worktrees", slug));
-  const branchName = `session/${slug}`;
 
-  if (!isPathAllowed(worktreePath)) {
+  // Each session gets its own worktree + branch again (76eefe1 removed this
+  // because a bare worktree had no node_modules/.env and no workspace trust —
+  // bootstrapWorktree() now supplies all three). Set MODE2_MENU_WORKTREE=false
+  // to spawn in the repo root and share one working tree instead.
+  const worktreePath = MODE2_MENU_WORKTREE
+    ? resolve(join(repoPath, ".worktrees", slug))
+    : null;
+  const branchName = MODE2_MENU_WORKTREE ? `session/${slug}` : null;
+
+  if (worktreePath && !isPathAllowed(worktreePath)) {
     await edit(ctx, `❌ Worktree path not allowed.`, new InlineKeyboard().text("‹ Back", "m2:work"), true);
     return;
   }
@@ -251,14 +259,23 @@ async function spawnSession(ctx: Context, repo: string): Promise<void> {
   await edit(ctx, `⏳ Spawning session in <code>${escapeHtml(repo)}</code>…`, new InlineKeyboard(), true);
 
   let worktreeCreated = false;
+  let bootstrap: BootstrapResult | null = null;
+  let startNote = "";
   try {
-    // Create a fresh branch from the repo's default branch in an isolated worktree
-    const defaultBranch = await sh.gitDefaultBranch(repoPath);
-    const wt = await sh.gitWorktreeAdd(repoPath, worktreePath, defaultBranch, branchName);
-    if (!wt.ok) throw new WorktreeExists(worktreePath);
-    worktreeCreated = true;
+    if (worktreePath && branchName) {
+      // Branch from the freshest remote state, not the local checkout, so a
+      // session never starts on a stale main.
+      const start = await sh.gitFreshStartPoint(repoPath);
+      startNote = start.note;
+      const wt = await sh.gitWorktreeAdd(repoPath, worktreePath, start.ref, branchName);
+      if (!wt.ok) throw new WorktreeExists(worktreePath);
+      worktreeCreated = true;
+      bootstrap = await bootstrapWorktree(repoPath, worktreePath);
+    }
 
-    const spawnResult = await sh.tmuxNewSession(tmuxName, worktreePath, rcName);
+    const spawnCwd = worktreePath ?? repoPath;
+    const { model } = await loadRuntimeConfig();
+    const spawnResult = await sh.tmuxNewSession(tmuxName, spawnCwd, rcName, model);
     if (!spawnResult.ok) throw new SpawnFailed(slug, spawnResult.stderr);
 
     let alive = false;
@@ -269,30 +286,52 @@ async function spawnSession(ctx: Context, repo: string): Promise<void> {
     }
     if (!alive) throw new SpawnFailed(slug, `tmux session ${tmuxName} not found after 3s`);
 
+    // Try to get the RC session URL from the tmux pane
+    let rcUrl: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      rcUrl = await sh.getRcSessionUrl(tmuxName);
+      if (rcUrl) break;
+    }
+
     const now = new Date().toISOString();
     const workSession: WorkSession = {
-      slug, repo, path: worktreePath,
+      slug, repo, path: worktreePath ?? repoPath,
       worktree_path: worktreePath, branch: branchName,
       tmux_name: tmuxName, rc_name: rcName,
       created_at: now, last_attached_at: now,
       closed: false,
     };
     await store.append(workSession);
-    await auditLog(userId, username, "mode2.work.spawn", `slug=${slug} repo=${repo} branch=${branchName}`);
+    await auditLog(
+      userId, username, "mode2.work.spawn",
+      `slug=${slug} repo=${repo}${branchName ? ` branch=${branchName}` : ""}`,
+    );
+
+    const connectLine = rcUrl
+      ? `🔗 <a href="${escapeHtml(rcUrl)}">Open in Cloud Code Remote</a>`
+      : `RC: <code>${escapeHtml(rcName)}</code>`;
+
+    const bootLine = bootstrap ? summarizeBootstrap(bootstrap) : "";
 
     await edit(
       ctx,
       `✅ <b>${escapeHtml(slug)}</b>\n` +
       `Repo: <code>${escapeHtml(repo)}</code>\n` +
-      `Branch: <code>${escapeHtml(branchName)}</code>\n` +
-      `RC: <code>${escapeHtml(rcName)}</code>`,
+      (branchName
+        ? `Branch: <code>${escapeHtml(branchName)}</code>${startNote ? ` from <code>${escapeHtml(startNote)}</code>` : ""}\n`
+        : "") +
+      (bootLine ? `Bootstrap: ${escapeHtml(bootLine)}\n` : "") +
+      connectLine,
       new InlineKeyboard()
         .text("🔗 Attach", `m2:attach:${slug}`).row()
         .text("‹ Work", "m2:work").text("‹ Menu", "m2:menu"),
       true,
     );
   } catch (err) {
-    if (worktreeCreated) {
+    // Don't strand a half-built worktree (and the branch pointing at it) when
+    // the spawn fails after we created it.
+    if (worktreeCreated && worktreePath) {
       await sh.gitWorktreeRemoveOnRollback(repoPath, worktreePath);
       await auditLog(userId, username, "mode2.work.rollback", `slug=${slug} worktree=${worktreePath}`);
     }

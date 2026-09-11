@@ -7,7 +7,8 @@
 import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session } from "../session";
+import { registry } from "../session-registry";
+import { convKeyFromCtx } from "../conversation";
 import { resolvePermissionRequest } from "./permission";
 import { resolveQuestionRequest } from "./question";
 import { ALLOWED_USER } from "../config";
@@ -17,6 +18,7 @@ import { handleSessions, handleRepos, handleWork, handleClose, handleMode2Callba
 import { handleNotificationCallback } from "./mode2/notifications";
 import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
+import { runExclusive } from "../turn/dispatcher";
 
 /**
  * Handle callback queries from inline keyboards.
@@ -89,6 +91,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const requestId = parts[1]!;
   const optionIndex = parseInt(parts[2]!, 10);
 
+  const convKey = convKeyFromCtx(ctx);
+  const session = registry.get(convKey);
+
   // 3. Load request file
   const requestFile = `/tmp/ask-user-${requestId}.json`;
   let requestData: {
@@ -153,13 +158,16 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const statusCallback = createStatusCallback(ctx, state);
 
   try {
-    const response = await session.sendMessageStreaming(
-      message,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
+    const response = await runExclusive(convKey, () =>
+      session.sendMessageStreaming(
+        message,
+        username,
+        userId,
+        statusCallback,
+        chatId,
+        ctx,
+        convKey.threadId
+      )
     );
 
     await auditLog(userId, username, "CALLBACK", message, response);
@@ -319,6 +327,9 @@ async function handleResumeCallback(
     return;
   }
 
+  const convKey = convKeyFromCtx(ctx);
+  const session = registry.get(convKey);
+
   // Check if session is already active
   if (session.isActive) {
     await ctx.answerCallbackQuery({ text: "Sessione già attiva" });
@@ -350,13 +361,16 @@ async function handleResumeCallback(
   const statusCallback = createStatusCallback(ctx, state);
 
   try {
-    await session.sendMessageStreaming(
-      recapPrompt,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
+    await runExclusive(convKey, () =>
+      session.sendMessageStreaming(
+        recapPrompt,
+        username,
+        userId,
+        statusCallback,
+        chatId,
+        ctx,
+        convKey.threadId
+      )
     );
   } catch (error) {
     console.error("Error getting recap:", error);

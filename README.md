@@ -96,6 +96,7 @@ The Telegram interface accepts every media type and turns it into a Claude sessi
 - 🔘 Interactive buttons — Claude presents choices as tappable Telegram keyboards
 - 📎 File delivery — Claude sends files back via the chat
 - 🔔 Notifications — scheduled routines and reminders deliver as actionable Telegram messages
+- 🧵 Parallel sessions — optional: each forum topic in a supergroup is an independent Claude session (see [Parallel sessions](#parallel-sessions-forum-topics))
 
 ---
 
@@ -125,17 +126,7 @@ The recommended way to run the bot. No Bun or Node.js installation required on t
 
 1. Open [@BotFather](https://t.me/BotFather) on Telegram
 2. Send `/newbot` → copy the token
-3. Send `/setcommands` to BotFather:
-
-```
-start - Show status and user ID
-new - Start a fresh session
-resume - Pick from recent sessions to resume
-stop - Interrupt current query
-status - Check what Claude is doing
-restart - Restart the bot
-menu - Open control panel
-```
+3. Skip `/setcommands`: the bot registers its own command menu on every boot (`setMyCommands` from `src/commands-manifest.ts`), so the autocomplete list always matches the running version.
 
 **Finding your Telegram user ID:** message [@userinfobot](https://t.me/userinfobot).
 
@@ -228,10 +219,24 @@ cp launchagent/com.claude-telegram-ts.plist.template \
 launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 ```
 
-**Linux systemd service:**
+**Linux systemd services** (`systemd/`, install with `sudo cp systemd/*.service /etc/systemd/system/ && sudo systemctl daemon-reload`). The unit files carry `/home/<user>` in `WorkingDirectory`, `EnvironmentFile`, `ExecStart` and `PATH`; replace it with the bot user's home before copying, e.g. `sed -i "s|/home/<user>|$HOME|g" systemd/*.service`.
+
+| Unit | Role |
+|---|---|
+| `claude-rc-tmux` | Long-lived tmux server that owns every mode-2 RC session. Restarting it kills them all. |
+| `claude-telegram-bot` | The bot process. Safe to restart any time; sessions live in the tmux server, not here. |
+| `claude-assistant` | Interactive "KB Assistant" Claude session in tmux. Ordered after `claude-rc-tmux`. |
 
 ```bash
-sudo systemctl restart claude-telegram-bot
+sudo systemctl restart claude-telegram-bot        # deploy new bot code; sessions survive
+sudo systemctl restart claude-assistant           # restart only the KB Assistant session
+
+# Full restart. Never `restart` all three in one command: systemd starts them in
+# parallel, claude-assistant's `tmux new-session` wins the socket, the server
+# lands in the wrong cgroup and `tmux -D` crash-loops on "not a terminal".
+sudo systemctl stop claude-assistant claude-telegram-bot
+sudo systemctl restart claude-rc-tmux
+sudo systemctl start claude-assistant claude-telegram-bot
 ```
 
 ### Persistent operation: sleep, restart, lifecycle
@@ -272,6 +277,33 @@ This bot is designed for 24/7 server operation (Linux + systemd, or a small VPS 
 | `BOT_DATA_DIR` | | Path to bot-data dir (default: `~/bot-data`) |
 | `ALLOWED_PATHS` | | Comma-separated dirs Claude can access (overrides defaults; include `~/.claude`) |
 | `TZ` | | Timezone for scheduler (default: `Europe/Moscow`; set to your own, e.g. `America/Los_Angeles`, `Europe/Berlin`, `Asia/Tokyo`) |
+
+Everything else is optional and documented inline in [`.env.example`](.env.example), grouped as follows. Defaults are the values in that file.
+
+| Group | Variables | What it controls |
+|---|---|---|
+| Parallel sessions | `TELEGRAM_GROUP_CHAT_ID`, `SESSION_IDLE_EVICT_MINUTES`, `TOPIC_IDLE_CLOSE_DAYS`, `MAX_ACTIVE_TOPICS`, `TOPIC_REAPER_INTERVAL_MS`, `AUTO_RESUME_TTL_HOURS`, `TOPIC_AUTO_RESUME_TTL_HOURS` | Forum-topic sessions and their idle/auto-close/resume windows (see below) |
+| Turn batching | `TURN_BATCH_WINDOW_MS`, `TURN_BATCH_MAX_WAIT_MS`, `TURN_BATCH_MAX_ITEMS`, `TURN_BATCH_MAX_BYTES`, `TURN_BATCH_CARD` | A burst of messages (forwards, an album, typing faster than Claude answers) becomes one turn; `TURN_BATCH_WINDOW_MS=0` switches it off |
+| Rich Messages | `RICH_MESSAGES_ENABLED`, `RICH_STREAMING_ENABLED` | Long or structured answers go out as Bot API Rich Messages (32k chars, tables, fenced code) instead of being split at 4096 |
+| Mode 2 | `REPOS_DIR`, `REAPER_INTERVAL_MS`, `REAPER_IDLE_THRESHOLD_MS`, `MODE2_MENU_WORKTREE`, `WORKTREE_LINK_PATHS`, `WORKTREE_COPY_PATHS` | Remote coding sessions: where repos are discovered, when idle sessions retire, what a fresh worktree inherits |
+| Security | `RATE_LIMIT_ENABLED`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW` | Token-bucket rate limit per user |
+| Claude auth | `ANTHROPIC_API_KEY`, `CLAUDE_CLI_PATH` | API key instead of CLI login; explicit CLI path when it is not on `PATH` |
+| Extended thinking | `THINKING_KEYWORDS`, `THINKING_DEEP_KEYWORDS` | Words in a message that switch on normal / deep thinking |
+| Voice | `TRANSCRIPTION_CONTEXT_FILE` | Names and terms handed to the transcriber so they are not misheard |
+| Logging | `AUDIT_LOG_PATH`, `AUDIT_LOG_JSON` | Where the audit log goes and whether it is JSON |
+
+### Parallel sessions (forum topics)
+
+Optional. With `TELEGRAM_GROUP_CHAT_ID` unset the bot behaves as a single DM conversation. Set it and every forum topic in that supergroup becomes an **independent Claude session** with its own context, history, `/status` and `/stop`; topics run in parallel and do not interrupt each other. `/topic [name]` opens one, `/close` inside a topic closes it, and every notification gains an "Open in new chat" button.
+
+One-time manual setup, all four steps required:
+
+1. Create a **supergroup** and turn on **Topics** (Manage group → Topics).
+2. Add the bot as an **admin** with the **Manage Topics** permission.
+3. **Disable privacy mode** for the bot in @BotFather (`/setprivacy` → Disable). Without this the bot only sees commands and replies in the group; plain messages inside topics never reach it, which looks exactly like the bot being broken.
+4. Keep the group's membership to yourself: authorization is still the single `TELEGRAM_ALLOWED_USER`.
+
+Then set `TELEGRAM_GROUP_CHAT_ID` to the group id (starts with `-100`) and restart. Routines and reminders are delivered to the group's General topic from then on, falling back to the DM only if that send fails. Idle windows, the topic cap and the auto-resume TTLs are the *Parallel sessions* group in the table above.
 
 ### MCP servers
 
@@ -336,23 +368,32 @@ Natural-language intent routing is built in — you don't need to type the slash
 |---|---|
 | `/start` | Show status and your user ID |
 | `/new` | Start a fresh session |
+| `/topic [name]` | Open a forum topic with its own independent session (only with `TELEGRAM_GROUP_CHAT_ID`) |
+| `/compact` | Summarize this session into a handoff brief and start fresh with it |
 | `/resume` | Pick from last 5 sessions to resume (with recap) |
+| `/retry` | Re-send the previous message |
 | `/stop` | Interrupt current query |
-| `/status` | Check what Claude is doing |
+| `/status` | Model, context usage with a breakdown, session state |
+| `/model [model-id]` | Show or change the model; applies to the next `/new` |
 | `/restart` | Restart the bot |
 | `/menu` | Open Mode 2 control panel (remote session management) |
+| `/work <repo> [subpath] [worktree] [branch]` | Spawn a Mode 2 coding session |
+| `/sessions` | List open Mode 2 sessions with idle times |
+| `/attach <slug>` | Get the claude.ai/code link for a session |
+| `/close [slug]` | Close a Mode 2 session; bare `/close` closes the current forum topic |
+| `/repos` | List the repos `/work` and `/menu` can spawn sessions on |
 
 ---
 
 ## Security
 
-> **⚠️ Important:** This bot runs Claude Code with permission prompts handled via Telegram inline buttons. Claude can read, write, and execute commands within the allowed paths. Understand the implications before deploying.
+> **⚠️ Important:** This bot runs Claude Code in its `default` permission mode with the bot's own approval policy in front of every tool call: local work inside `ALLOWED_PATHS` is auto-approved, anything that leaves the machine or changes future sessions asks you via a Telegram inline keyboard. Claude can read, write, and execute commands within the allowed paths without a prompt. Understand the implications before deploying.
 
 **→ [Read the full Security Model](SECURITY.md)**
 
 Protections:
 1. **User allowlist** — only your Telegram user ID can use the bot
-2. **Intent classification** — AI filter blocks dangerous requests
+2. **Auto-approval policy** — remote writes (`ssh`, `curl -d`, non-read `gh`), privilege escalation, connector tools that are not reads, and writes to `CLAUDE.md` / `settings*.json` ask first; everything local runs without a prompt (`checkAutoApprove` in `src/security.ts`; interactive sessions get the same lists from `config/claude-permissions.json` via `scripts/sync-claude-permissions.sh`)
 3. **Path validation** — file access restricted to `ALLOWED_PATHS`
 4. **Command safety** — patterns like `rm -rf /` are blocked
 5. **Rate limiting** — prevents runaway usage
@@ -392,6 +433,15 @@ After code changes on Linux with systemd: `sudo systemctl restart claude-telegra
 **`/menu` (Mode 2) fails to spawn a session**
 - One-time setup per target repo: run `claude` interactively inside the repo once and accept the workspace-trust dialog. Trust persists for the workspace; subsequent `/menu` spawns succeed without prompts.
 - The repo's default branch is detected automatically — `main`, `master`, or whatever HEAD points at — so this is no longer a source of "worktree already exists" errors.
+- If the error names `claude-rc-tmux.service`, the long-lived tmux server that owns RC hosts is not running: `sudo systemctl start claude-rc-tmux`. Spawning is refused rather than falling back, because a server started by the bot would sit in the bot's cgroup and every session in it would die on the next bot restart. Check the journal for `mode2.tmux.no_server` or `mode2.tmux.in_service_cgroup`.
+
+**Mode 2 sessions die whenever the bot restarts**
+- Expected before `claude-rc-tmux.service` existed; a bug now. RC hosts must live in that unit's cgroup, not the bot's, because tmux panes inherit the *server's* cgroup. Verify with:
+  ```bash
+  RC_PID=$(tmux list-panes -t work-<slug> -F '#{pane_pid}')
+  cat /proc/$RC_PID/cgroup   # want claude-rc-tmux.service, NOT claude-telegram-bot.service
+  ```
+- If it reads `claude-telegram-bot.service`, the bot started its own tmux server. Most likely cause: `PrivateTmp=` or `ProtectHome=` was added to a unit, which splits the `/tmp/tmux-$UID/default` socket path. Remove it and restart `claude-rc-tmux`.
 
 **`pdftotext` not found (native mode)**
 - macOS: `brew install poppler`
