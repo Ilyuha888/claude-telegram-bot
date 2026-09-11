@@ -1,24 +1,30 @@
 /**
  * Photo message handler for Claude Telegram Bot.
  *
- * Supports single photos and media groups (albums) with 1s buffering.
+ * One photo, one part. Albums are no longer buffered here: an album item is an
+ * ordinary part that happens to carry a `media_group_id`, which the collector
+ * reads as a floor on the debounce window. Telegram splitting one user action
+ * into N updates is protocol handling and must keep working even with burst
+ * batching switched off; grouping a burst is a product decision. Two levels of
+ * buffering would stack their latencies and make the `inflight` accounting a
+ * guess.
+ *
+ * The visible change: every photo's own caption now reaches Claude, bound to
+ * that photo. The old album buffer kept one caption for the whole group and
+ * silently discarded the captions of items 2..N.
  */
 
 import type { Context } from "grammy";
 import type { UserContentBlock } from "../session";
-import { session } from "../session";
+import { convKeyFromCtx } from "../conversation";
 import { ALLOWED_USER, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, buildMessageContext, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
-import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
-
-// Create photo-specific media group buffer
-const photoBuffer = createMediaGroupBuffer({
-  emoji: "📷",
-  itemLabel: "photo",
-  itemLabelPlural: "photos",
-});
+import {
+  auditLogRateLimit,
+  buildMessageContext,
+  startTypingIndicator,
+} from "../utils";
+import { beginArrival, endArrival, hasPending, submitPart } from "../turn/collector";
 
 /**
  * Download a photo and return the local path.
@@ -47,78 +53,6 @@ async function downloadPhoto(ctx: Context): Promise<string> {
 }
 
 /**
- * Process photos with Claude.
- */
-async function processPhotos(
-  ctx: Context,
-  photoPaths: string[],
-  caption: string | undefined,
-  userId: number,
-  username: string,
-  chatId: number
-): Promise<void> {
-  // Mark processing started
-  const stopProcessing = session.startProcessing();
-
-  // Build content blocks
-  const blocks: UserContentBlock[] = [];
-
-  if (caption) {
-    blocks.push({ type: 'text', text: caption });
-  } else {
-    blocks.push({ type: 'text', text: photoPaths.length === 1 ? 'User sent a photo:' : `User sent ${photoPaths.length} photos:` });
-  }
-
-  for (const photoPath of photoPaths) {
-    try {
-      const data = await Bun.file(photoPath).arrayBuffer();
-      const base64Data = Buffer.from(data).toString('base64');
-      blocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: base64Data }
-      });
-    } catch (err) {
-      console.error(`Failed to read photo ${photoPath}:`, err);
-      blocks.push({ type: 'text', text: `[Photo unavailable: ${photoPath}]` });
-    }
-  }
-
-  // Set conversation title (if new session)
-  if (!session.isActive) {
-    const rawTitle = caption || "[Foto]";
-    const title =
-      rawTitle.length > 50 ? rawTitle.slice(0, 47) + "..." : rawTitle;
-    session.conversationTitle = title;
-  }
-
-  // Start typing
-  const typing = startTypingIndicator(ctx);
-
-  // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
-
-  try {
-    const response = await session.sendMessageStreaming(
-      blocks,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
-    );
-
-    const auditSummary = `[Photo x${photoPaths.length}]${caption ? ` ${caption}` : ''}`;
-    await auditLog(userId, username, "PHOTO", auditSummary, response);
-  } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages);
-  } finally {
-    stopProcessing();
-    typing.stop();
-  }
-}
-
-/**
  * Handle incoming photo messages.
  */
 export async function handlePhoto(ctx: Context): Promise<void> {
@@ -126,6 +60,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
   const mediaGroupId = ctx.message?.media_group_id;
+  const caption = ctx.message?.caption;
 
   if (!userId || !chatId) {
     return;
@@ -137,76 +72,116 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
-  // 2. For single photos, show status and rate limit early
+  const convKey = convKeyFromCtx(ctx);
+
+  // 2. Claim an arrival slot, synchronously, before the download.
+  const seq = beginArrival(convKey);
+  const typing = startTypingIndicator(ctx);
+
+  // Album items don't each get a status message — they'd flicker three of them
+  // for one user action. The collecting card covers that case instead.
   let statusMsg: Awaited<ReturnType<typeof ctx.reply>> | null = null;
-  if (!mediaGroupId) {
+
+  try {
+    // 3. Rate limit. Skipped mid-burst, which is also what keeps an album from
+    // being charged once per photo — the rule the old album buffer applied by
+    // checking only its first item.
+    if (!hasPending(convKey)) {
+      const [allowed, retryAfter] = rateLimiter.check(userId);
+      if (!allowed) {
+        await auditLogRateLimit(userId, username, retryAfter!);
+        await ctx.reply(
+          `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+        );
+        return;
+      }
+    }
+
     console.log(`Received photo from @${username}`);
-    // Rate limit
-    const [allowed, retryAfter] = rateLimiter.check(userId);
-    if (!allowed) {
-      await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
-        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-      );
+
+    if (!mediaGroupId) {
+      statusMsg = await ctx.reply("📷 Processing image...");
+    }
+
+    // 4. Download
+    let photoPath: string;
+    try {
+      photoPath = await downloadPhoto(ctx);
+    } catch (error) {
+      console.error("Failed to download photo:", error);
+      await replaceStatus(ctx, statusMsg, "❌ Failed to download photo.");
+      statusMsg = null;
       return;
     }
 
-    // Show status immediately
-    statusMsg = await ctx.reply("📷 Processing image...");
-  }
+    // 5. Read the bytes for the vision block. The file stays on disk: the
+    // attachment hint in the prompt points at it, and the persistence contract
+    // in CLAUDE.md is that the agent can Read it during the turn.
+    const media: UserContentBlock[] = [];
+    let bytes = 0;
+    try {
+      const data = await Bun.file(photoPath).arrayBuffer();
+      const base64Data = Buffer.from(data).toString("base64");
+      bytes = base64Data.length;
+      media.push({
+        type: "image",
+        source: { type: "base64", media_type: "image/jpeg", data: base64Data },
+      });
+    } catch (err) {
+      console.error(`Failed to read photo ${photoPath}:`, err);
+      await replaceStatus(ctx, statusMsg, "❌ Failed to read the downloaded photo.");
+      statusMsg = null;
+      return;
+    }
 
-  // 3. Download photo
-  let photoPath: string;
-  try {
-    photoPath = await downloadPhoto(ctx);
+    // 6. Per-photo prompt text: this photo's own caption, its own forward/reply
+    // provenance, and its own path on disk.
+    const text = buildMessageContext(ctx, { attachments: [photoPath] });
+
+    submitPart(ctx, convKey, {
+      kind: "photo",
+      seq,
+      messageId: ctx.message?.message_id,
+      mediaGroupId,
+      text,
+      media,
+      audit: { kind: "PHOTO", summary: `[Photo]${caption ? ` ${caption}` : ""}` },
+      titleSeed: caption || "[Foto]",
+      bytes: bytes + text.length,
+    });
   } catch (error) {
-    console.error("Failed to download photo:", error);
+    console.error("Photo processing error:", error);
+    await ctx.reply("❌ Failed to process photo.");
+  } finally {
+    typing.stop();
+    endArrival(convKey);
+
+    // The status message has done its job the moment the part is queued; the
+    // answer itself may be a whole burst away.
     if (statusMsg) {
       try {
-        await ctx.api.editMessageText(
-          statusMsg.chat.id,
-          statusMsg.message_id,
-          "❌ Failed to download photo."
-        );
-      } catch (editError) {
-        console.debug("Failed to edit status message:", editError);
-        await ctx.reply("❌ Failed to download photo.");
+        await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
+      } catch (error) {
+        console.debug("Failed to delete status message:", error);
       }
-    } else {
-      await ctx.reply("❌ Failed to download photo.");
     }
+  }
+}
+
+/** Turn the status message into an error, or post one if it never appeared. */
+async function replaceStatus(
+  ctx: Context,
+  statusMsg: Awaited<ReturnType<typeof ctx.reply>> | null,
+  text: string
+): Promise<void> {
+  if (!statusMsg) {
+    await ctx.reply(text);
     return;
   }
-
-  // 4. Single photo - process immediately
-  if (!mediaGroupId && statusMsg) {
-    await processPhotos(
-      ctx,
-      [photoPath],
-      buildMessageContext(ctx, { attachments: [photoPath] }) || undefined,
-      userId,
-      username,
-      chatId
-    );
-
-    // Clean up status message
-    try {
-      await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
-    } catch (error) {
-      console.debug("Failed to delete status message:", error);
-    }
-    return;
+  try {
+    await ctx.api.editMessageText(statusMsg.chat.id, statusMsg.message_id, text);
+  } catch (editError) {
+    console.debug("Failed to edit status message:", editError);
+    await ctx.reply(text);
   }
-
-  // 5. Media group - buffer with timeout
-  if (!mediaGroupId) return; // TypeScript guard
-
-  await photoBuffer.addToGroup(
-    mediaGroupId,
-    photoPath,
-    ctx,
-    userId,
-    username,
-    processPhotos
-  );
 }

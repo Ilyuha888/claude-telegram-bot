@@ -1,22 +1,24 @@
 /**
  * Voice message handler for Claude Telegram Bot.
+ *
+ * Prepares a part and hands it to the turn collector; `runTurn` in src/turn does
+ * everything after that. The transcript is still posted here, and the typing
+ * indicator still runs for the download and transcription, because six seconds
+ * of silence is what makes a voice note look like a hang.
  */
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session } from "../session";
+import { convKeyFromCtx } from "../conversation";
 import { ALLOWED_USER, TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
-  auditLog,
   auditLogRateLimit,
-  classifyClaudeError,
-  formatClaudeErrorReply,
   transcribeVoice,
   startTypingIndicator,
   buildMessageContext,
 } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
+import { beginArrival, endArrival, hasPending, submitPart } from "../turn/collector";
 
 /**
  * Handle incoming voice messages.
@@ -45,38 +47,42 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3. Rate limit check
-  const [allowed, retryAfter] = rateLimiter.check(userId);
-  if (!allowed) {
-    await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(
-      `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-    );
-    return;
-  }
+  const convKey = convKeyFromCtx(ctx);
 
-  // 4. Mark processing started (allows /stop to work during transcription/classification)
-  const stopProcessing = session.startProcessing();
-
-  // 5. Start typing indicator for transcription
+  // 3. Claim an arrival slot. Synchronous, before the first await: a voice note
+  // takes seconds to transcribe, and this is what stops a text message that
+  // arrived beside it from being dispatched without it.
+  const seq = beginArrival(convKey);
   const typing = startTypingIndicator(ctx);
 
   let voicePath: string | null = null;
 
   try {
-    // 6. Download voice file
+    // 4. Rate limit check. Skipped mid-burst — one forward of five messages is
+    // one user action, not five against the bucket.
+    if (!hasPending(convKey)) {
+      const [allowed, retryAfter] = rateLimiter.check(userId);
+      if (!allowed) {
+        await auditLogRateLimit(userId, username, retryAfter!);
+        await ctx.reply(
+          `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+        );
+        return;
+      }
+    }
+
+    // 5. Download voice file
     const file = await ctx.getFile();
     const timestamp = Date.now();
     voicePath = `${TEMP_DIR}/voice_${timestamp}.ogg`;
 
-    // Download the file
     const downloadRes = await fetch(
       `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
     );
     const buffer = await downloadRes.arrayBuffer();
     await Bun.write(voicePath, buffer);
 
-    // 7. Transcribe
+    // 6. Transcribe
     const statusMsg = await ctx.reply("🎤 Transcribing...");
 
     const transcript = await transcribeVoice(voicePath);
@@ -86,11 +92,10 @@ export async function handleVoice(ctx: Context): Promise<void> {
         statusMsg.message_id,
         "❌ Transcription failed."
       );
-      stopProcessing();
       return;
     }
 
-    // 8. Show transcript (truncate display if needed - full transcript still sent to Claude)
+    // 7. Show transcript (truncate display if needed - full transcript still sent to Claude)
     const maxDisplay = 4000; // Leave room for 🎤 "" wrapper within 4096 limit
     const displayTranscript =
       transcript.length > maxDisplay
@@ -102,48 +107,28 @@ export async function handleVoice(ctx: Context): Promise<void> {
       `🎤 "${displayTranscript}"`
     );
 
-    // 9. Set conversation title from transcript (if new session)
-    if (!session.isActive) {
-      const title =
-        transcript.length > 50 ? transcript.slice(0, 47) + "..." : transcript;
-      session.conversationTitle = title;
-    }
-
-    // 10. Create streaming state and callback
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
-
-    // 11. Send to Claude — enrich with voice notice and any forward/reply/quote provenance
+    // 8. Hand it over — enriched with the voice notice and any forward/reply
+    // provenance, audited against the raw transcript rather than the prompt.
     const enrichedMessage = buildMessageContext(ctx, { voiceTranscript: transcript });
-    const claudeResponse = await session.sendMessageStreaming(
-      enrichedMessage,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx
-    );
-
-    // 12. Audit log — record raw transcript, not the enriched prompt
-    await auditLog(userId, username, "VOICE", transcript, claudeResponse);
+    submitPart(ctx, convKey, {
+      kind: "voice",
+      seq,
+      messageId: ctx.message?.message_id,
+      text: enrichedMessage,
+      media: [],
+      audit: { kind: "VOICE", summary: transcript },
+      titleSeed: transcript,
+      bytes: enrichedMessage.length,
+    });
   } catch (error) {
     console.error("Error processing voice:", error);
-
-    const kind = classifyClaudeError(error);
-    if (kind === "cancellation") {
-      // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-      const wasInterrupt = session.consumeInterruptFlag();
-      if (!wasInterrupt) {
-        await ctx.reply(formatClaudeErrorReply(error));
-      }
-    } else {
-      await ctx.reply(formatClaudeErrorReply(error));
-    }
+    await ctx.reply("❌ Failed to process voice message.");
   } finally {
-    stopProcessing();
     typing.stop();
+    endArrival(convKey);
 
-    // Clean up voice file
+    // The .ogg was only ever needed for transcription, which is over either way,
+    // so it is not handed to the turn as a cleanup path.
     if (voicePath) {
       try {
         unlinkSync(voicePath);

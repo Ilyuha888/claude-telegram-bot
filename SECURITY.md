@@ -2,24 +2,39 @@
 
 This document describes the security architecture of the Claude Telegram Bot.
 
-## Permission Mode: Full Bypass
+## Permission Mode: default, with an auto-approval policy
 
-**This bot runs Claude Code with all permission prompts disabled.**
+The bot runs Claude Code in the SDK's `default` permission mode. Nothing is bypassed:
 
 ```typescript
 // src/session.ts
-permissionMode: "bypassPermissions"
-allowDangerouslySkipPermissions: true
+permissionMode: "default",
+allowDangerouslySkipPermissions: false,
 ```
 
-This means Claude can:
-- **Read and write files** without asking for confirmation
-- **Execute shell commands** without permission prompts
-- **Use all tools** (Bash, Edit, Write, etc.) autonomously
+Every tool call the CLI's own allow rules do not settle reaches the bot's `canUseTool` callback, which applies `checkAutoApprove` (`src/security.ts`). The decision is one of three:
 
-This is intentional. The bot is designed for personal use from mobile, where confirming every file read or command would be impractical. Instead of per-action prompts, we rely on defense-in-depth with multiple security layers described below.
+**Auto-approved, no prompt** — work that stays on this machine:
+- `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit` on a path inside `ALLOWED_PATHS`
+- `Bash` commands that pass command safety (below) and are not remote writes
+- `WebSearch`, `WebFetch`, `Skill`, subagents (`Agent`)
+- the built-in MCP servers (`ask-user`, `send-file`) and claude.ai connector tools whose verb is a read (`get_`, `list_`, `search_`, `fetch_`, `query_`, …)
 
-**This is not configurable** - the bot always runs in bypass mode. If you need permission prompts, use Claude Code directly instead.
+**Asks via a Telegram inline keyboard** (Allow / Deny) — anything that leaves the machine or changes future sessions:
+- remote writes: `ssh`, `scp`, `rsync`, `sftp`, mail clients; `gh` subcommands that are not reads; `curl` / `wget` carrying a body or a write method. `git push` to a configured remote is deliberately *not* in this list: it is treated as local work and runs without a prompt
+- privilege escalation: `sudo`, `su`, `doas`
+- writes to files that steer later sessions, even inside `ALLOWED_PATHS`: `CLAUDE.md`, `settings.json`, `settings.local.json`, `.mcp.json`, anything under `.claude/{rules,skills,agents,commands,hooks}/`
+- connector tools with a non-read verb (`send_message`, `create_event`, `update_page`, …). Unknown verbs count as writes, so a new connector fails closed until its read verbs are listed
+
+Wrappers do not hide a command: `env`, `timeout`, `nohup`, `xargs`, `bash -c '…'`, `$(which ssh)` and command chains (`;`, `&&`, `|`) are unwrapped and each segment is judged on its own.
+
+**Denied with an explanation** — a run with no chat behind it (the scheduler) never gets an approval prompt, so an action that would ask is denied and Claude is told to skip it and mention it in the reply. Nothing is auto-approved because nobody was there to ask.
+
+Every decision is written to the audit log (`auto-approved`, `needs interactive approval`, or the user's answer).
+
+Interactive sessions the bot spawns (mode-2 remote-control hosts, the KB Assistant tmux session) do not pass through `canUseTool`. They receive the equivalent allow / ask lists from `config/claude-permissions.json`, written into each repo's `.claude/settings.local.json` by `scripts/sync-claude-permissions.sh`. Re-run the script after editing the JSON.
+
+The blocked patterns, path validation, rate limit and audit log below apply in addition to this policy.
 
 ## Threat Model
 

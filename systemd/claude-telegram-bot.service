@@ -1,0 +1,32 @@
+#
+# The Telegram bot process. Safe to restart at any time: mode-2 RC sessions
+# live in the tmux server owned by claude-rc-tmux.service, not in this cgroup.
+#
+# Restart=always (was a drop-in override.conf; folded in here so the repo copy
+# is the whole truth). Reads secrets from .env in the repo root.
+#
+# INSTALL (root):
+#   sudo cp systemd/claude-telegram-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now claude-telegram-bot
+#
+[Unit]
+Description=Claude Telegram Bot (linuz90)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=assistant
+WorkingDirectory=/home/<user>/repos/claude-telegram-bot
+EnvironmentFile=/home/<user>/repos/claude-telegram-bot/.env
+ExecStart=/home/<user>/.bun/bin/bun run src/index.ts
+Restart=always
+RestartSec=10
+Environment=HOME=/home/<user>
+Environment=PATH=/home/<user>/.local/bin:/home/<user>/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-telegram-bot
+
+[Install]
+WantedBy=multi-user.target

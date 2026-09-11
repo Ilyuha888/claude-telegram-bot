@@ -6,12 +6,53 @@ import { homedir } from "os";
 const VAULT_DIR =
   process.env.CTB_VAULT_DIR || `${homedir()}/repos/ctb-vault`;
 
+/**
+ * Marker a routine emits instead of a report when it could not read its inputs.
+ * `fire()` matches on this and delivers a failure card rather than passing the
+ * line off as a digest.
+ */
+export const ROUTINE_ERROR_PREFIX = "ROUTINE_ERROR:";
+
+/**
+ * The one rule every routine needs and none of them had.
+ *
+ * Each prompt used to end with "if a path doesn't resolve, silently skip that
+ * item — never narrate the problem", written to stop the agent leaking "Let me
+ * check the vault structure…" into a Telegram card (commit 02e365a, 2026-04-29).
+ * It worked, and it also made failure indistinguishable from success: on
+ * 2026-07-29 and 07-30 the daily focus made ZERO tool calls and emitted
+ * "Nothing queued. Good time to do a weekly review." — a sentence that reads
+ * like a healthy vault with nothing due, delivered while six projects were
+ * active. Two days of digests were lost before anyone could tell.
+ *
+ * The distinction that fixes it: an empty section is a factual claim about the
+ * vault, and a claim has to be earned by reading. Suppressing narration is still
+ * right — the routine just has to fail loudly instead of quietly.
+ */
+const FAILURE_CONTRACT = `FAILURE CONTRACT: this routine runs unattended, with nobody watching to notice a wrong answer, so a plausible-looking wrong report is worse than a loud failure. If you cannot read the files this report is built from, your ENTIRE response must be exactly one line:
+${ROUTINE_ERROR_PREFIX} <what you could not read>
+Never absorb a failed read into an empty or partial report. An empty section asserts that there is nothing there — only write it if you actually looked.`;
+
+/**
+ * `getThinkingLevel()` in session.ts picks a thinking budget by keyword-matching
+ * the message it is handed, and a routine's prompt IS that message — so a prompt
+ * with no THINKING_KEYWORDS word runs with thinking off. That is not just a
+ * quality question: the API rejects an `effortLevel` above `high` outright when
+ * thinking is disabled, and the 2026-08-22 daily focus died that way after the
+ * user's settings.json drifted to `xhigh`. Every prompt body keeps a trigger word.
+ */
+const THINKING_TRIGGER = `Think first: work out which files the report needs, read them, then check every line you are about to send against what you actually read. Thinking is not part of the response — the response is still the report alone.`;
+
 export const PROMPTS: Record<string, { title: string; body: string }> = {
   daily_focus: {
     title: "Daily focus",
     body: `You are a daily-focus assistant. Produce today's digest.
 
-CRITICAL: Your ENTIRE response must be the digest and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that section — never narrate the problem.
+CRITICAL: Your ENTIRE response must be the digest and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble.
+
+${THINKING_TRIGGER}
+
+${FAILURE_CONTRACT}
 
 INSTRUCTIONS:
 
@@ -51,17 +92,22 @@ OUTPUT FORMAT (Telegram markdown, ≤1200 chars):
 
 Rules:
 - If next_action is missing for an active project, show: "[project-name] — ⚠️ no next action set"
-- If no active projects and no tasks: "Nothing queued. Good time to do a weekly review."
+- Only list projects that exist as .md files directly in ${VAULT_DIR}/projects/. Never promote a note from inbox/, resources/ or areas/ into a project row, and never invent a project name to fill space — a fabricated row is far worse than a short digest.
+- Take next_action, due, energy, waiting_on and last_reviewed VERBATIM from the frontmatter. Never derive them from prose in the note body: a long project note often discusses a different "next" step than the one in its frontmatter, and the frontmatter is the only authoritative source.
+- If the scan succeeded and genuinely found no active projects and no open tasks, write: "Nothing queued (scanned N project files). Good time to do a weekly review." — where N is the number of .md files you actually listed. That sentence asserts you read the directory, so never write it unless you did; if you could not list the directory at all, use the ${ROUTINE_ERROR_PREFIX} line instead.
 - No preamble. No method explanation. No reasoning about file paths or vault structure. Just the digest.
-- If you cannot read a file or a path is wrong, omit that section silently. Never explain what went wrong.
-- Your response starts with 📅 and contains only the formatted digest.`,
+- Your response starts with 📅 — or with ${ROUTINE_ERROR_PREFIX} — and contains nothing else.`,
   },
 
   weekly_curator: {
     title: "Weekly curator",
     body: `You are the weekly vault curator. Produce a curation report.
 
-CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that item — never narrate the problem.
+CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble.
+
+${THINKING_TRIGGER}
+
+${FAILURE_CONTRACT}
 
 INSTRUCTIONS:
 
@@ -121,7 +167,11 @@ Your response starts with 📋 and contains only the formatted report. No preamb
     title: "Monthly project audit",
     body: `You are the monthly project auditor. Review project health and area coverage.
 
-CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that item — never narrate the problem.
+CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble.
+
+${THINKING_TRIGGER}
+
+${FAILURE_CONTRACT}
 
 INSTRUCTIONS:
 
@@ -169,7 +219,11 @@ Your response starts with 🗓 and contains only the formatted report. No preamb
     title: "Quarterly review",
     body: `You are the quarterly vault reviewer. Produce a strategic synthesis — not a stats report.
 
-CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble. If a file is missing or a path doesn't resolve, silently skip that item — never narrate the problem.
+CRITICAL: Your ENTIRE response must be the report and nothing else. No reasoning, no self-talk, no commentary about paths or vault structure, no "Let me…" preamble.
+
+${THINKING_TRIGGER}
+
+${FAILURE_CONTRACT}
 
 INSTRUCTIONS:
 

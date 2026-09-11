@@ -1,13 +1,16 @@
 import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
-import { session } from "../../session";
+import { registry } from "../../session-registry";
+import { convKeyFromCtx } from "../../conversation";
 import { escapeHtml, convertMarkdownToHtml } from "../../formatting";
 import * as notifStore from "../../mode2/notifications-store";
 import * as schedulesStore from "../../mode2/schedules-store";
-import { scheduleOneShot, notificationKeyboard } from "../../scheduler";
-import type { Schedule } from "../../mode2/types";
+import { scheduleOneShot, notificationKeyboard, newSessionLabel } from "../../scheduler";
+import { spawnTopicSession, topicsEnabled, topicLink } from "../../topics";
+import type { Notification, Schedule } from "../../mode2/types";
 import { StreamingState, createStatusCallback } from "../streaming";
 import { startTypingIndicator } from "../../utils";
+import { runExclusive } from "../../turn/dispatcher";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -229,7 +232,7 @@ async function handleShow(ctx: Context, notifId: string): Promise<void> {
   // list so the user can keep working through their backlog. The :menu
   // suffix is read by the respective handlers to switch behaviour.
   const keyboard = new InlineKeyboard()
-    .text("New session", `notif:new:${notifId}`)
+    .text(newSessionLabel(), `notif:new:${notifId}`)
     .text("Delete", `notif:del:${notifId}:menu`)
     .row()
     .text("Remind later", `notif:remind:${notifId}:menu`)
@@ -243,6 +246,30 @@ async function handleShow(ctx: Context, notifId: string): Promise<void> {
   );
 }
 
+const SKILL_PRIMERS: Record<string, string> = {
+  weekly_curator:   "/curator",
+  monthly_audit:    "/curator",
+  quarterly_review: "/curator",
+};
+
+/**
+ * First message sent into the session a notification opens.
+ *
+ * Three shapes: a skill invocation carrying the last report (the V_rich
+ * routines), an outcome-capture prompt for a Scribe reminder, and a generic
+ * "help me act on this" for anything else.
+ */
+export function buildPrimingPrompt(notif: Notification): string {
+  const skillPrimer = SKILL_PRIMERS[notif.prompt_key];
+  if (skillPrimer) {
+    return `${skillPrimer}\n\nLast report (${notif.fired_at}):\n---\n${notif.content}\n---\n\nIf actionable items exist (drafts to promote, MOCs to create, projects to archive), propose them one-by-one and wait for my confirmation before any vault write.`;
+  }
+  if (notif.prompt_key === "scribe_reminder") {
+    return `My reminder just fired: "${notif.title}"\n\n${notif.content}\n\nI've done it. Read the note for context, then help me capture what I learned.`;
+  }
+  return `Here is a scheduled notification I received. Please help me act on it:\n\n---\n${notif.content}\n---\n\nWhat would you suggest?`;
+}
+
 async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
   const notif = await notifStore.get(notifId);
   if (!notif || notif.status === "deleted") {
@@ -251,14 +278,45 @@ async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
   }
 
   await notifStore.markRead(notifId);
-  await ctx.answerCallbackQuery({ text: "Starting new session…" });
+  const priming = buildPrimingPrompt(notif);
 
-  try {
-    await ctx.editMessageText(
-      `📬 <b>${escapeHtml(notif.title)}</b> — opened in new session`,
-      { parse_mode: "HTML" },
-    );
-  } catch { /* non-critical */ }
+  if (topicsEnabled()) {
+    await ctx.answerCallbackQuery({ text: "Opening in new topic…" });
+    await markOpened(ctx, notif.title, "opened in a new topic");
+    try {
+      await spawnTopicSession(ctx.api, {
+        name: notif.title,
+        primingPrompt: priming,
+        ctx,
+        // Fired before the priming turn, which can run for minutes — the link
+        // is only useful if it arrives when the topic does.
+        onTopicCreated: async (key) => {
+          const link = key.threadId !== undefined
+            ? topicLink(key.chatId, key.threadId)
+            : null;
+          if (!link) return;
+          await ctx.reply(`🧵 <a href="${link}">${escapeHtml(notif.title)}</a>`, {
+            parse_mode: "HTML",
+          });
+        },
+      });
+    } catch (err) {
+      console.error("[notifications] topic spawn failed:", err);
+      await ctx.reply(`❌ ${String(err instanceof Error ? err.message : err).slice(0, 400)}`);
+    }
+    return;
+  }
+
+  // No forum group configured: there is nowhere else to put the conversation,
+  // so this stays exactly what it was — clear the current session and prime a
+  // fresh one in place. The kill() is deliberate here and only here: the
+  // button promises a *new* session, and without a second chat the only way
+  // to keep that promise is to end the current one.
+  const convKey = convKeyFromCtx(ctx);
+  const session = registry.get(convKey);
+
+  await ctx.answerCallbackQuery({ text: "Starting new session…" });
+  await markOpened(ctx, notif.title, "opened in new session");
 
   await session.kill();
 
@@ -266,32 +324,19 @@ async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
   const state = new StreamingState();
   const statusCallback = createStatusCallback(ctx, state);
 
-  const SKILL_PRIMERS: Record<string, string> = {
-    weekly_curator:   "/curator",
-    monthly_audit:    "/curator",
-    quarterly_review: "/curator",
-  };
-  const skillPrimer = SKILL_PRIMERS[notif.prompt_key];
-
-  let priming: string;
-  if (skillPrimer) {
-    priming = `${skillPrimer}\n\nLast report (${notif.fired_at}):\n---\n${notif.content}\n---\n\nIf actionable items exist (drafts to promote, MOCs to create, projects to archive), propose them one-by-one and wait for my confirmation before any vault write.`;
-  } else if (notif.prompt_key === "scribe_reminder") {
-    priming = `My reminder just fired: "${notif.title}"\n\n${notif.content}\n\nI've done it. Read the note for context, then help me capture what I learned.`;
-  } else {
-    priming = `Here is a scheduled notification I received. Please help me act on it:\n\n---\n${notif.content}\n---\n\nWhat would you suggest?`;
-  }
-
   try {
     const userId = ctx.from?.id ?? 0;
     const username = ctx.from?.username ?? "unknown";
-    await session.sendMessageStreaming(
-      priming,
-      username,
-      userId,
-      statusCallback,
-      ctx.chat?.id,
-      ctx,
+    await runExclusive(convKey, () =>
+      session.sendMessageStreaming(
+        priming,
+        username,
+        userId,
+        statusCallback,
+        ctx.chat?.id,
+        ctx,
+        convKey.threadId,
+      )
     );
   } catch (err) {
     console.error("[notifications] new session error:", err);
@@ -299,6 +344,16 @@ async function handleNewSession(ctx: Context, notifId: string): Promise<void> {
   } finally {
     typing.stop();
   }
+}
+
+/** Rewrite the notification message so it can't be actioned twice. */
+async function markOpened(ctx: Context, title: string, suffix: string): Promise<void> {
+  try {
+    await ctx.editMessageText(
+      `📬 <b>${escapeHtml(title)}</b> — ${suffix}`,
+      { parse_mode: "HTML" },
+    );
+  } catch { /* non-critical */ }
 }
 
 async function handleDelete(

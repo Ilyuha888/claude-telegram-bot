@@ -1,0 +1,35 @@
+#
+# Interactive "KB Assistant" Claude session, hosted in tmux with Remote Control.
+#
+# Ordered after claude-rc-tmux.service on purpose. `tmux new-session` spawns a
+# server if none owns /tmp/tmux-1000/default; when this unit started in
+# parallel with (or before) claude-rc-tmux it won that race, the server landed
+# in THIS unit's cgroup, and `tmux -D` then crash-looped with "open terminal
+# failed: not a terminal" (2026-09-06). Wants= (not Requires=) so a broken
+# rc-tmux still lets this session start standalone.
+#
+# INSTALL (root):
+#   sudo cp systemd/claude-assistant.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now claude-assistant
+#
+[Unit]
+Description=Claude Code Personal Assistant
+After=network-online.target claude-rc-tmux.service
+Wants=network-online.target claude-rc-tmux.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=assistant
+Environment=HOME=/home/<user>
+Environment=PATH=/home/<user>/.local/bin:/home/<user>/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=BUN_INSTALL=/home/<user>/.bun
+ExecStart=/usr/bin/tmux new-session -d -s assistant -x 220 -y 50 /home/<user>/repos/claude-telegram-bot/scripts/start-assistant.sh
+ExecStop=/usr/bin/tmux kill-session -t assistant
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-assistant
+
+[Install]
+WantedBy=multi-user.target

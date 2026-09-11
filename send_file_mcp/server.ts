@@ -19,7 +19,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { realpathSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
 import { resolve as resolvePath, sep } from "path";
 
 const PHOTO_MAX_SIZE = 10 * 1024 * 1024;
@@ -51,6 +51,32 @@ const FORBIDDEN_FILENAMES = new Set([
 function parseAllowedPaths(): string[] {
   const raw = process.env.ALLOWED_PATHS || "";
   return raw.split(",").map((p) => p.trim()).filter(Boolean);
+}
+
+/**
+ * Where this file should be delivered.
+ *
+ * TELEGRAM_CONTEXT_FILE is injected by the bot per ClaudeSession instance and
+ * holds `{ chat_id, thread_id }` for that one conversation. Read fresh on every
+ * tool call, never cached at module load: a session that is resumed or moved
+ * rewrites the file, and a stale read would deliver into the wrong chat.
+ *
+ * TELEGRAM_CHAT_ID stays as the fallback — it is process-global on the bot side
+ * (so it loses under parallel sessions) but it still covers the window before
+ * the first query has written a context file.
+ */
+function resolveDeliveryTarget(): { chatId: string; threadId?: string } {
+  let chatId = process.env.TELEGRAM_CHAT_ID || "";
+  let threadId: string | undefined;
+  try {
+    const raw = readFileSync(process.env.TELEGRAM_CONTEXT_FILE || "", "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed.chat_id) chatId = String(parsed.chat_id);
+    if (parsed.thread_id != null) threadId = String(parsed.thread_id);
+  } catch {
+    // No context file (or unreadable/malformed) — fall back to the env var.
+  }
+  return { chatId, threadId };
 }
 
 function resolveRealPath(p: string): string {
@@ -205,9 +231,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     );
   }
 
-  const chatId = process.env.TELEGRAM_CHAT_ID || "";
+  const { chatId, threadId } = resolveDeliveryTarget();
   if (!chatId) {
-    return errorResponse("Error: TELEGRAM_CHAT_ID not set. Cannot determine recipient.");
+    return errorResponse(
+      "Error: no delivery target (TELEGRAM_CONTEXT_FILE / TELEGRAM_CHAT_ID unset). Cannot determine recipient."
+    );
   }
 
   const requestUuid = crypto.randomUUID().slice(0, 8);
@@ -219,6 +247,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     caption,
     status: "pending",
     chat_id: chatId,
+    thread_id: threadId ?? null,
     size_bytes: size,
     send_kind: kind,
     created_at: new Date().toISOString(),

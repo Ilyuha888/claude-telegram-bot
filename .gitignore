@@ -54,3 +54,7 @@ bot-data/
 .haft/problems/
 .haft/refresh/
 .haft/solutions/
+
+# Mode-2 session worktrees. Never tracked: bootstrapWorktree() copies .env and
+# .claude/settings.local.json into these, so they must not be stageable.
+.worktrees/
