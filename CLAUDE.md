@@ -25,7 +25,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 
 - **`src/index.ts`** - Entry point, registers handlers, starts polling
 - **`src/config.ts`** - Environment parsing, MCP loading, safety prompts
-- **`src/session.ts`** - `ClaudeSession` class wrapping Agent SDK V2 with streaming, resume, and defense-in-depth safety checks. Instances are per-conversation, never global — the module exports the class only
+- **`src/session.ts`** - `ClaudeSession` class wrapping Agent SDK V2 with streaming, resume, and defense-in-depth safety checks. Instances are per-conversation, never global — the module exports the class only. A reply with 0 tokens in ~1 s means the Agent SDK could not resolve the claude binary: check `CLAUDE_CODE_PATH` first.
 - **`src/conversation.ts`** - `ConversationKey {chatId, threadId}`, `convKeyFromCtx`, `convKeyStr`, `threadOpts`, `DeliveryTarget`. One key = one independent Claude session. DMs and the General topic both normalize to `threadId: undefined`
 - **`src/session-registry.ts`** - `registry.get/peek/kill/isAnyRunning/evictIdle` — the map of live `ClaudeSession` instances keyed by conversation
 - **`src/session-store.ts`** - Atomic serialized store for `${BOT_DATA_DIR}/chat-session-history.json`; per-conversation pruning
@@ -36,7 +36,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 - **`src/formatting.ts`** - Markdown→HTML conversion for Telegram, tool status emoji formatting
 - **`src/utils.ts`** - Audit logging, voice transcription (OpenAI), typing indicators
 - **`src/types.ts`** - Shared TypeScript types
-- **`src/scheduler.ts`** - In-process node-cron scheduler: fire loop, dialogue-interrupt gate (waits ≤60s if session active), boot catch-up, soft Telegram delivery with notification keyboard. `fs.watch(SCHEDULES_FILE)` picks up new one-shot entries written at runtime (e.g. by Scribe) without restart.
+- **`src/scheduler.ts`** - In-process node-cron scheduler: fire loop, dialogue-interrupt gate (waits ≤60s if session active), boot catch-up, soft Telegram delivery with notification keyboard. `fs.watch(SCHEDULES_FILE)` picks up new one-shot entries written at runtime (e.g. by Scribe) without restart. Bun `fs.watch` reports tmp+rename writes differently on macOS and Linux: test the watcher's filename predicate directly and confirm on the host.
 - **`src/scheduler-prompts.ts`** - Source-controlled prompt bodies for the 4 V_rich routines (daily focus, weekly curator, monthly audit, quarterly review)
 
 ### Turn modules (`src/turn/`)
